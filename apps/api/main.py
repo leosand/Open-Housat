@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from housat.reporting import (DuplicateReportError, NoObservationsError, SiteNotFoundError,
@@ -23,14 +24,27 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.5.1-mvp-l4",
+app = FastAPI(title="Housat API", version="0.5.2-mvp-l4",
               description="MVP : backfill, jalons V&V, avant/apres, carte, rapports PDF hebdo.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """Cree les tables, dedup historique observations, index unique (SQLite + PG).
+
+    Comble le gap V&V : la contrainte UNIQUE du modele ne s'applique qu'aux bases
+    neuves — une base existante du MVP-l1..l3 pouvait contenir des doublons
+    (site_id, obs_date). On conserve l'observation la plus ancienne (MIN(id)).
+    """
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as c:
+        c.execute(text(
+            "DELETE FROM observations WHERE id NOT IN ("
+            "SELECT MIN(id) FROM observations GROUP BY site_id, obs_date)"))
+        c.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_obs_site_date "
+            "ON observations (site_id, obs_date)"))
 
 
 @app.exception_handler(HTTPException)

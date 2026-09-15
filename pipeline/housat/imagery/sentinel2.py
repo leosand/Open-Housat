@@ -2,6 +2,8 @@
 Sentinel-2 L2A fetching from the free Element84 Earth Search STAC API — 0$.
 MVP-l1 : contexte HTTP partage, backfill multi-scenes, reprojection du polygone
 EPSG:4326 -> CRS du raster (corrige le bug latent de v0.1).
+V&V 2026-09-15 : alignement des bandes hetero-resolution — swir16 (20 m) est
+reechantillonnee sur la grille 10 m de red avant les indices (sinon broadcast crash).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from rasterio.mask import mask as rio_mask
 from shapely.geometry import mapping, shape
 from shapely.ops import transform as shp_transform
 
+from housat import observations as obs
 from housat.config import settings
 
 COLLECTION = "sentinel-2-l2a"
@@ -96,7 +99,8 @@ def _reproject_polygon(polygon: dict[str, Any], dst_crs: Any) -> dict[str, Any]:
 
 
 def fetch_bands(ctx: StacContext, polygon: dict[str, Any], scene: SceneMeta) -> dict[str, np.ndarray]:
-    """Telecharge et clippe les bandes (reflectance 0-1) sur le polygone du chantier."""
+    """Telecharge et clippe les bandes (reflectance 0-1) sur le polygone du chantier.
+    Aligne les bandes a resolutions differentes (swir16 20 m) sur la grille 10 m de red."""
     item = ctx.item(scene.item_id)
     out: dict[str, np.ndarray] = {}
     for band in BANDS:
@@ -104,4 +108,9 @@ def fetch_bands(ctx: StacContext, polygon: dict[str, Any], scene: SceneMeta) -> 
             poly = _reproject_polygon(polygon, src.crs)
             clipped, _ = rio_mask(src, [poly], crop=True, filled=True, nodata=0)
             out[band] = clipped[0].astype(np.float32) / 10000.0
+    ref = out.get("red")
+    if ref is not None:
+        for band, arr in out.items():
+            if arr.shape != ref.shape:
+                out[band] = obs.match_shape({band: arr}, ref.shape)[band]
     return out

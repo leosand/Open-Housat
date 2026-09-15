@@ -1,6 +1,7 @@
-"""Orchestrateur MVP-l3 : backfill d'archive + verification manuelle, frames ancrees t0.
+"""Orchestrateur MVP-l4 : backfill d'archive + verification manuelle, frames ancrees t0.
 Comparaison vs ancre avec alignement de grille (match_shape), jalons V&V pivot,
 pv_sum honnete, bbox de l'image persistee (overlay carte fidele), alertes in-app monotones.
+Dedup (site_id, obs_date) : une scene deja persistee n'est jamais reinseree.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import numpy as np
 from shapely.geometry import shape
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from housat.config import settings
 from housat.detection.change import bsi, ndbi, ndvi
@@ -73,11 +75,23 @@ def _max_milestone(engine: Engine, site_id: int) -> int:
     return int(row[0])
 
 
+def _has_observation(engine: Engine, site_id: int, obs_date: str) -> bool:
+    """True si une observation existe deja pour (chantier, date d'acquisition)."""
+    with engine.begin() as c:
+        row = c.execute(text("SELECT 1 FROM observations WHERE site_id=:i AND obs_date=:d"),
+                        {"i": site_id, "d": obs_date}).first()
+    return row is not None
+
+
 def _persist_observation(
     engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
     anchor_idx: list[np.ndarray] | None, sr_method: str, image_bbox: list[float],
 ) -> dict:
-    """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone."""
+    """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone.
+    Idempotent : une scene deja persistee (meme site_id + obs_date) est ignoree."""
+    if _has_observation(engine, site_id, scene.acquired.isoformat()):
+        logger.info("site %s : scene %s deja persistee, ignoree", site_id, scene.acquired)
+        return {"status": "duplicate", "obs_date": scene.acquired.isoformat()}
     base: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
                   "cloud_cover": scene.cloud_cover, "sr_method": sr_method,
                   "image_bbox": image_bbox}
@@ -103,19 +117,26 @@ def _persist_observation(
     prev_max = _max_milestone(engine, site_id)
     payload.update(milestone=milestone, milestone_label=MILESTONE_LABELS_FR[milestone],
                    pivot_confirme=pivot, confidence=confidence)
-    with engine.begin() as c:
-        c.execute(
-            text("INSERT INTO observations (site_id, obs_date, milestone, pivot_confirme, confidence, payload, image_png, created_at)"
-                 " VALUES (:s, :d, :m, :p, :cf, :pl, :img, :t)"),
-            {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
-             "cf": confidence, "pl": json.dumps(payload), "img": png,
-             "t": datetime.now(timezone.utc)})
-        if milestone > prev_max:  # alertes monotones
-            msg = f"Jalon atteint : {MILESTONE_LABELS_FR[milestone]} (M{milestone})"
-            c.execute(text("INSERT INTO alerts (site_id, channel, message, milestone, sent_at)"
-                           " VALUES (:s, 'in-app', :m, :ms, :t)"),
-                      {"s": site_id, "m": msg, "ms": milestone, "t": datetime.now(timezone.utc)})
-            logger.info("site %s : %s", site_id, msg)
+    try:
+        with engine.begin() as c:
+            c.execute(
+                text("INSERT INTO observations (site_id, obs_date, milestone, pivot_confirme, confidence, payload, image_png, created_at)"
+                     " VALUES (:s, :d, :m, :p, :cf, :pl, :img, :t)"),
+                {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
+                 "cf": confidence, "pl": json.dumps(payload), "img": png,
+                 "t": datetime.now(timezone.utc)})
+            if milestone > prev_max:  # alertes monotones
+                msg = f"Jalon atteint : {MILESTONE_LABELS_FR[milestone]} (M{milestone})"
+                c.execute(text("INSERT INTO alerts (site_id, channel, message, milestone, sent_at)"
+                               " VALUES (:s, 'in-app', :m, :ms, :t)"),
+                          {"s": site_id, "m": msg, "ms": milestone, "t": datetime.now(timezone.utc)})
+                logger.info("site %s : %s", site_id, msg)
+    except IntegrityError:
+        # course concurrente : un autre worker/API a insere la meme (site_id, obs_date)
+        # entre le _has_observation() et l'INSERT -> traite comme un doublon, pas une panne.
+        logger.info("site %s : conflit concurrent sur %s, traite comme doublon",
+                    site_id, scene.acquired.isoformat())
+        return {"status": "duplicate", "obs_date": scene.acquired.isoformat()}
     return payload
 
 
@@ -130,7 +151,7 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
         polygon = json.loads(site["polygon_geojson"])
         bbox = _bbox4326(polygon)
         ctx = StacContext()
-        scenes = ctx.search_scenes(polygon, limit=limit)
+        scenes = ctx.search_scenes(polygon, limit=limit, mode="archive")
         if not scenes:
             raise RuntimeError("aucune scene sous le seuil de nuages dans la fenetre")
         results, anchor_idx = [], None
@@ -144,8 +165,9 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
                                                 sr_method, bbox))
         with engine.begin() as c:
             c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
+        persisted = [r for r in results if r.get("status") != "duplicate"]
         return {"site_id": site_id, "status": "done" if len(scenes) >= 2 else "baseline_only",
-                "scenes": len(results), "results": results}
+                "scenes": len(persisted), "results": results}
     except Exception as exc:  # noqa: BLE001 — trace en base, jamais silencieux
         logger.exception("backfill site %s", site_id)
         with engine.begin() as c:
@@ -155,12 +177,15 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
 
 
 def check_site(engine: Engine | None, site_id: int) -> dict:
-    """Verification manuelle : scene la plus recente vs ancre t0 (ou baseline si 1re fois)."""
+    """Verification manuelle : scene la PLUS RECENTE vs ancre t0 (ou baseline si 1re fois).
+    Fix V&V : recherchait auparavant la scene la moins nuageuse (mode par defaut),
+    ce qui pouvait rejouer une scene ancienne au lieu de detecter un changement recent."""
     engine = engine or _engine()
     site = _get_site(engine, site_id)
     polygon = json.loads(site["polygon_geojson"])
     ctx = StacContext()
-    scenes = ctx.search_scenes(polygon, limit=1, window_days=settings.search_window_days)
+    scenes = ctx.search_scenes(polygon, limit=1, window_days=settings.search_window_days,
+                               mode="latest")
     if not scenes:
         return {"site_id": site_id, "status": "cloud_pending"}
     bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scenes[0]))

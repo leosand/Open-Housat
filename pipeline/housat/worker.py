@@ -1,7 +1,7 @@
 """Orchestrateur MVP-l4 : backfill d'archive + verification manuelle, frames ancrees t0.
 Comparaison vs ancre avec alignement de grille (match_shape), jalons V&V pivot,
 pv_sum honnete, bbox de l'image persistee (overlay carte fidele), alertes in-app monotones.
-Dedup (site_id, obs_date) : une scene deja persistee n'est jamais reinseree.
+Dedup (site_id, obs_date) AVANT telechargement : une scene deja persistee ne coute rien.
 """
 
 from __future__ import annotations
@@ -87,11 +87,7 @@ def _persist_observation(
     engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
     anchor_idx: list[np.ndarray] | None, sr_method: str, image_bbox: list[float],
 ) -> dict:
-    """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone.
-    Idempotent : une scene deja persistee (meme site_id + obs_date) est ignoree."""
-    if _has_observation(engine, site_id, scene.acquired.isoformat()):
-        logger.info("site %s : scene %s deja persistee, ignoree", site_id, scene.acquired)
-        return {"status": "duplicate", "obs_date": scene.acquired.isoformat()}
+    """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone."""
     base: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
                   "cloud_cover": scene.cloud_cover, "sr_method": sr_method,
                   "image_bbox": image_bbox}
@@ -133,7 +129,7 @@ def _persist_observation(
                 logger.info("site %s : %s", site_id, msg)
     except IntegrityError:
         # course concurrente : un autre worker/API a insere la meme (site_id, obs_date)
-        # entre le _has_observation() et l'INSERT -> traite comme un doublon, pas une panne.
+        # entre le pre-controle et l'INSERT -> traite comme un doublon, pas une panne.
         logger.info("site %s : conflit concurrent sur %s, traite comme doublon",
                     site_id, scene.acquired.isoformat())
         return {"status": "duplicate", "obs_date": scene.acquired.isoformat()}
@@ -141,7 +137,8 @@ def _persist_observation(
 
 
 def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> dict:
-    """Backfill d'archive : scenes les moins nuageuses, ancre t0, jalons par scene."""
+    """Backfill d'archive : scenes les moins nuageuses, ancre t0, jalons par scene.
+    Dedup amont : une scene deja en base n'est ni telechargee ni re-super-resolue."""
     engine = engine or _engine()
     site = _get_site(engine, site_id)
     with engine.begin() as c:
@@ -154,8 +151,14 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
         scenes = ctx.search_scenes(polygon, limit=limit, mode="archive")
         if not scenes:
             raise RuntimeError("aucune scene sous le seuil de nuages dans la fenetre")
-        results, anchor_idx = [], None
+        results, anchor_idx, skipped = [], None, 0
         for scene in scenes:
+            if _has_observation(engine, site_id, scene.acquired.isoformat()):
+                logger.info("site %s : scene %s deja presente, telechargement evite",
+                            site_id, scene.acquired)
+                skipped += 1
+                results.append({"status": "duplicate", "obs_date": scene.acquired.isoformat()})
+                continue
             bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scene))
             if anchor_idx is None:
                 anchor_idx = _indices(bands)
@@ -167,7 +170,7 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
             c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
         persisted = [r for r in results if r.get("status") != "duplicate"]
         return {"site_id": site_id, "status": "done" if len(scenes) >= 2 else "baseline_only",
-                "scenes": len(persisted), "results": results}
+                "scenes": len(persisted), "skipped": skipped, "results": results}
     except Exception as exc:  # noqa: BLE001 — trace en base, jamais silencieux
         logger.exception("backfill site %s", site_id)
         with engine.begin() as c:
@@ -178,8 +181,8 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
 
 def check_site(engine: Engine | None, site_id: int) -> dict:
     """Verification manuelle : scene la PLUS RECENTE vs ancre t0 (ou baseline si 1re fois).
-    Fix V&V : recherchait auparavant la scene la moins nuageuse (mode par defaut),
-    ce qui pouvait rejouer une scene ancienne au lieu de detecter un changement recent."""
+    Dedup amont : une scene deja traitee n'est ni telechargee ni re-super-resolue —
+    la verification renvoie alors {'status': 'duplicate'} sans cout reseau."""
     engine = engine or _engine()
     site = _get_site(engine, site_id)
     polygon = json.loads(site["polygon_geojson"])
@@ -188,6 +191,11 @@ def check_site(engine: Engine | None, site_id: int) -> dict:
                                mode="latest")
     if not scenes:
         return {"site_id": site_id, "status": "cloud_pending"}
+    if _has_observation(engine, site_id, scenes[0].acquired.isoformat()):
+        logger.info("site %s : derniere scene %s deja traitee, aucun telechargement",
+                    site_id, scenes[0].acquired)
+        return {"site_id": site_id, "status": "duplicate",
+                "obs_date": scenes[0].acquired.isoformat()}
     bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scenes[0]))
     anchor = _load_frame_row(engine, site_id, "anchor")
     if anchor is None:

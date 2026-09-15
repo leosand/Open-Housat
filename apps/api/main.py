@@ -23,7 +23,7 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.5.0-mvp-l4",
+app = FastAPI(title="Housat API", version="0.5.1-mvp-l4",
               description="MVP : backfill, jalons V&V, avant/apres, carte, rapports PDF hebdo.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -141,11 +141,17 @@ def _run_backfill_bg(site_id: int) -> None:
 
 @app.post("/sites/{site_id}/backfill", status_code=status.HTTP_202_ACCEPTED)
 def trigger_backfill(site_id: int, background: BackgroundTasks, session: SessionDep) -> dict[str, str]:
+    """Declenche le backfill. Le statut 'running' est pose ICI (transaction committee)
+    avant d'accepter un second POST — evite la course idle/idle de deux 202 paralleles."""
     site = session.get(Site, site_id)
     if site is None:
         raise HTTPException(404, "chantier introuvable / site not found")
     if site.backfill_status == "running":
         raise HTTPException(409, "backfill deja en cours")
+    site.backfill_status = "running"
+    site.backfill_error = None
+    session.add(site)
+    session.commit()
     background.add_task(_run_backfill_bg, site_id)
     return {"status": "accepted", "poll": f"/sites/{site_id}/progress"}
 
@@ -162,12 +168,15 @@ def trigger_check(site_id: int, session: SessionDep) -> dict:
 
 @app.get("/sites/{site_id}/progress")
 def progress(site_id: int, session: SessionDep) -> dict:
+    """KPI du chantier. L'ordre est la date d'acquisition satellite (pas created_at) :
+    un check d'une scene recente ne doit pas inverser first/last si une scene plus
+    ancienne est reinseree plus tard."""
     site = session.get(Site, site_id)
     if site is None:
         raise HTTPException(404, "chantier introuvable / site not found")
     rows = list(session.exec(
         select(Observation).where(Observation.site_id == site_id)
-        .order_by(Observation.created_at.asc())))  # type: ignore[attr-defined]
+        .order_by(Observation.obs_date.asc(), Observation.id.asc())))  # type: ignore[attr-defined]
     compared = [r for r in rows if json.loads(r.payload or "{}").get("status") == "ok"]
     latest_p = json.loads(rows[-1].payload if rows else "{}")
     pv_first = _pv_sum(compared[0].payload) if compared else 0.0
@@ -207,7 +216,7 @@ def list_observations(site_id: int, session: SessionDep, limit: int = 60) -> lis
     if session.get(Site, site_id) is None:
         raise HTTPException(404, "chantier introuvable / site not found")
     rows = session.exec(select(Observation).where(Observation.site_id == site_id)
-                        .order_by(Observation.created_at.desc()).limit(min(limit, 100)))  # type: ignore[attr-defined]
+                        .order_by(Observation.obs_date.desc(), Observation.id.desc()).limit(min(limit, 100)))  # type: ignore[attr-defined]
     return [_summary(o) for o in rows]
 
 
@@ -268,9 +277,10 @@ def generate_report(site_id: int, week: str, session: SessionDep) -> dict:
         raise HTTPException(409, "rapport deja genere pour cette semaine") from exc
     except NoObservationsError as exc:
         raise HTTPException(422, "aucune observation sur cette semaine") from exc
-    except SiteNotFoundError as exc:  # garde-fou (site supprime entre les deux requetes)
+    except SiteNotFoundError as exc:
         raise HTTPException(404, "chantier introuvable / site not found") from exc
     r = session.exec(select(Report).where(Report.site_id == site_id,
                                           Report.week_start == d.isoformat())).first()
-    assert r is not None  # vient d'etre insere par build_weekly_report
+    if r is None:
+        raise HTTPException(500, "rapport genere mais illisible")
     return _report_meta(r)

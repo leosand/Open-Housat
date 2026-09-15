@@ -24,18 +24,17 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.5.2-mvp-l4",
+app = FastAPI(title="Housat API", version="0.5.3-mvp-l4",
               description="MVP : backfill, jalons V&V, avant/apres, carte, rapports PDF hebdo.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    """Cree les tables, dedup historique observations, index unique (SQLite + PG).
+def _init_db() -> None:
+    """Idempotent : tables + dedup historique + index unique (SQLite + PG).
 
-    Comble le gap V&V : la contrainte UNIQUE du modele ne s'applique qu'aux bases
-    neuves — une base existante du MVP-l1..l3 pouvait contenir des doublons
-    (site_id, obs_date). On conserve l'observation la plus ancienne (MIN(id)).
+    V&V : les hooks de demarrage FastAPI ne s'executent pas avec un TestClient
+    utilise sans gestionnaire de contexte — l'initialisation doit aussi exister
+    a l'import pour que les tests et les workers partageant ce moteur soient sains.
     """
     SQLModel.metadata.create_all(engine)
     with engine.begin() as c:
@@ -45,6 +44,14 @@ def on_startup() -> None:
         c.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_obs_site_date "
             "ON observations (site_id, obs_date)"))
+
+
+_init_db()  # import-time : survive a TestClient sans lifespan
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    _init_db()
 
 
 @app.exception_handler(HTTPException)

@@ -17,11 +17,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from housat import observations as obs
 from housat.config import settings
 from housat.detection.change import bsi, ndbi, ndvi
 from housat.imagery.sentinel2 import SceneMeta, StacContext, fetch_bands
 from housat.imagery.super_resolution import upscale_bands
-from housat import observations as obs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("housat.worker")
@@ -116,7 +116,8 @@ def _persist_observation(
     try:
         with engine.begin() as c:
             c.execute(
-                text("INSERT INTO observations (site_id, obs_date, milestone, pivot_confirme, confidence, payload, image_png, created_at)"
+                text("INSERT INTO observations (site_id, obs_date, milestone, pivot_confirme,"
+                     " confidence, payload, image_png, created_at)"
                      " VALUES (:s, :d, :m, :p, :cf, :pl, :img, :t)"),
                 {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
                  "cf": confidence, "pl": json.dumps(payload), "img": png,

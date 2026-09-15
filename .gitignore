@@ -9,3 +9,12 @@ data/
 *.tif
 *.tiff
 .DS_Store
+
+# --- Artefacts de test et de build locaux / local test & build artifacts ---
+*.db
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+apps/web/test-results/
+apps/web/playwright-report/
+coverage/

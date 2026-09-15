@@ -3,7 +3,6 @@ Unit tests for the detection engine on synthetic arrays.
 """
 
 import numpy as np
-
 from housat.detection.change import bsi, change_score, ndbi, ndvi
 from housat.detection.milestones import Milestone, classify
 
@@ -12,7 +11,10 @@ SHAPE = (64, 64)
 
 def _bands(nir: float = 0.5, red: float = 0.2, swir: float = 0.25) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(42)
-    noise = lambda v: np.full(SHAPE, v, dtype=np.float32) + rng.normal(0, 0.005, SHAPE).astype(np.float32)
+
+    def noise(v: float) -> np.ndarray:
+        return np.full(SHAPE, v, dtype=np.float32) + rng.normal(0, 0.005, SHAPE).astype(np.float32)
+
     return {
         "red": noise(red), "green": noise(0.3), "blue": noise(0.25),
         "nir": noise(nir), "swir16": noise(swir),

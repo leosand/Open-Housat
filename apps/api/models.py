@@ -3,6 +3,9 @@
 V&V 2026-09-15 : les colonnes binaires (image_png, pdf) sont en chargement DIFFERE
 (deferred) — sinon chaque liste (/observations, /reports) chargerait tous les BLOB
 en memoire pour rien. La lecture explicite declenche un lazy-load ponctuel.
+Correctif V&V : `Column(..., deferred=True)` n'est pas un argument accepte par
+SQLAlchemy 2.x (ils sont reserves a `mapped_column`/`orm.deferred`) -> l'API ne
+s'importait plus. Forme equivalente et portable : `orm.deferred(Column(...))`.
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, LargeBinary, UniqueConstraint, orm
 from sqlmodel import Field, SQLModel
 
 
@@ -40,7 +43,7 @@ class Observation(SQLModel, table=True):
     confidence: float = Field(default=0.0)
     payload: str = Field(default="")
     image_png: Optional[bytes] = Field(default=None,
-                                       sa_column=Column(LargeBinary, deferred=True))
+                                       sa_column=orm.deferred(Column(LargeBinary)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -61,7 +64,7 @@ class FrameStore(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     site_id: int = Field(foreign_key="sites.id", index=True)
     kind: str = Field(index=True)
-    data: bytes = Field(sa_column=Column(LargeBinary, deferred=True))
+    data: bytes = Field(sa_column=orm.deferred(Column(LargeBinary)))
 
 
 class Report(SQLModel, table=True):
@@ -75,5 +78,5 @@ class Report(SQLModel, table=True):
     week_end: str
     sha256: str = Field(max_length=64)
     observations_count: int = Field(default=0)
-    pdf: bytes = Field(sa_column=Column(LargeBinary, deferred=True))
+    pdf: bytes = Field(sa_column=orm.deferred(Column(LargeBinary)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

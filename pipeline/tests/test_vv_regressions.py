@@ -1,7 +1,6 @@
 """Regressions V&V transverses — synthetique, sans IO reseau."""
 
 import numpy as np
-
 from housat import observations as obs
 from housat.imagery.super_resolution import BAND_ORDER, upscale_bands
 

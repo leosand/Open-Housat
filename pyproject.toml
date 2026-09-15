@@ -1,0 +1,26 @@
+# Configuration outillage Python — Housat (bilingue EN/FR-CA)
+#
+# La CI exécute `ruff check pipeline/` : sans contrat explicite, l'ensemble de
+# règles suivi est celui des *défauts de la version installée* (`ruff>=0.5`, non
+# épinglé) — le lint dérive donc à chaque montée de version de ruff et la CI peut
+# devenir rouge indépendamment du code. On fige ici un contrat minimal explicite.
+#
+# Le contrat couvre les règles que le code respecte : erreurs réelles
+# (pycodestyle E/W, pyflakes F) + imports triés (I). Les règles plus opinionnées,
+# délibérément NON activées, sont documentées plutôt que contournées en silence :
+#
+#   DTZ011  `date.today()` : volontaire — les semaines ISO suivent le calendrier
+#           LOCAL de l'utilisateur (Québec), pas UTC ; passer à
+#           `datetime.now(timezone.utc).date()` décalerait la frontière de semaine
+#           de 4 h et changerait le comportement métier.
+#   PLC0206 / RUF100 / SIM117 / B017 / UP045 : refactors de style, ardoise
+#           séparée (non bloquants pour la V&V).
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["pipeline/tests", "apps/api/tests"]

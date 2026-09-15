@@ -4,7 +4,6 @@ import json
 from datetime import date
 
 import numpy as np
-
 from housat import observations as obs
 from housat import reporting
 

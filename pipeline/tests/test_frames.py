@@ -3,7 +3,6 @@ Unit tests for frames + V&V pivot indicators on synthetic arrays.
 """
 
 import numpy as np
-
 from housat import observations as obs
 
 SHAPE = (64, 64)
@@ -60,8 +59,17 @@ def test_detect_pivot_qualifie() -> None:
 
 
 def test_milestone_pivot_confirme_m2() -> None:
-    anchor = [_field(0.30) for _ in range(3)]
-    curr = [_field(0.30, 0.55) for _ in range(3)]
+    # M2 = pivot qualifie ET croissance d'emprise (dPRA > 0.15, growth > 0.01).
+    # La croissance est mesuree sur l'emprise ROBUSTE { PV > q80(PV > 0) } : une
+    # hausse UNIFORME n'y contribue jamais (tous les pixels actifs valent q80, donc
+    # le masque strict est vide) -> il faut une emprise batie heterogene, le patch
+    # neuf dominant la ligne de base.
+    anchor = [np.zeros(SHAPE, dtype=np.float32) for _ in range(3)]  # M0 : terrain nu, PV0 = 0
+    curr = []
+    for _ in range(3):
+        c = np.full(SHAPE, 0.02, dtype=np.float32)  # derive legere du terrain (sous q80)
+        c[16:40, 16:40] = 0.50                      # emprise batie : fondations + elevation
+        curr.append(c)
     pvs, divs = [], []
     for a, c in zip(anchor, curr):
         pv, div = obs.pv_div(a, c)

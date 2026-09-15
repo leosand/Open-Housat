@@ -5,10 +5,9 @@ from datetime import date, timedelta
 
 import numpy as np
 import pytest
-from sqlalchemy import create_engine, text
-
 from housat import observations as obs
 from housat import reporting
+from sqlalchemy import create_engine, text
 
 MONDAY = date(2026, 9, 7)  # semaine ISO de reference
 

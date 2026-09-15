@@ -4,7 +4,7 @@ on:
   push: {branches: [main]}
   pull_request:
   schedule:
-    - cron: "0 6 * * *"  # worker quotidien 06:00 UTC — runner gratuit = traitement 0 $
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,14 +18,26 @@ jobs:
       - run: ruff check pipeline/
       - run: cd pipeline && python -m pytest tests/ -q
 
-  api-quality:
+  api-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
-      - run: pip install -r apps/api/requirements.txt
-      - run: python -c "import ast, pathlib; ast.parse(pathlib.Path('apps/api/main.py').read_text())"
+      - run: pip install -r pipeline/requirements.txt -r apps/api/requirements.txt
+      - run: rm -f test-housat.db && python -m pytest apps/api/tests -q
+        env:
+          PYTHONPATH: pipeline:apps/api
+          HOUSAT_DATABASE_URL: sqlite:///./test-housat.db
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "20"}
+      - run: npm install --no-audit --no-fund && npm run build
+        working-directory: apps/web
 
   worker-run:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -39,8 +51,3 @@ jobs:
         working-directory: pipeline
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}

@@ -4,13 +4,13 @@ numpy>=1.26
 scikit-learn>=1.4
 scikit-image>=0.23
 shapely>=2.0
+pyproj>=3.6
+Pillow>=10.2
 pydantic>=2.6
 pydantic-settings>=2.2
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 httpx>=0.27
-# Super-resolution ESA OpenSR (optionnel : GPU recommande, fallback bicubique sinon)
-# pip install sen2sr
-# sen2sr>=0.2 ; python_version >= "3.10"
+# pip install sen2sr  (optionnel, GPU recommande ; fallback bicubique sinon)
 pytest>=8.0
 ruff>=0.5

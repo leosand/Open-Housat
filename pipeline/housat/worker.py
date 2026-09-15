@@ -1,6 +1,6 @@
-"""Orchestrateur : traite tous les chantiers actifs, cron-able (GitHub Actions = 0 $).
-Orchestrator: process every active site; designed for scheduled CI runs.
-Usage : python -m housat.worker --once
+"""Orchestrateur MVP-l1 : backfill d'archive + verification manuelle, frames ancrees t0.
+Backfill d'archive Sentinel-2 (scenes les moins nuageuses), comparaison vs ancre,
+jalons avec V&V pivot, alertes in-app (pas de canal externe en MVP-l1).
 """
 
 from __future__ import annotations
@@ -10,103 +10,201 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import text
-from sqlalchemy.engine import create_engine
+import numpy as np
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 from housat.config import settings
-from housat.imagery.sentinel2 import fetch_bands, search_best_scene
+from housat.detection.change import bsi, ndbi, ndvi
+from housat.imagery.sentinel2 import SceneMeta, StacContext, fetch_bands
 from housat.imagery.super_resolution import upscale_bands
-from housat.detection.change import change_score
-from housat.detection.milestones import Milestone, classify
+from housat import observations as obs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("housat.worker")
 
-MILESTONE_LABELS_FR = {
-    Milestone.M0_TERRAIN: "terrain nu",
-    Milestone.M1_FONDATION: "fondation detectee",
-    Milestone.M2_STRUCTURE: "structure en progression",
-    Milestone.M3_TOITURE: "toiture probable",
-    Milestone.M4_FINITION: "finition / amenagement",
-}
+MILESTONE_LABELS_FR = {0: "terrain nu", 1: "fondation detectee",
+                       2: "structure en progression", 3: "toiture probable",
+                       4: "finition / amenagement"}
 
 
-def process_site(site: dict) -> dict:
-    """Pipeline complet pour un chantier : scene -> SR -> changement -> jalon.
-    Full per-site pipeline. Toute anomalie est tracee, jamais silencieuse (cf. failure modes).
-    """
-    polygon = json.loads(site["polygon_geojson"])
-    scene = search_best_scene(polygon)
-    if scene is None:
-        logger.warning("site %s : aucune scene <= %.0f%% nuages", site["id"], settings.max_cloud_cover)
-        return {"site_id": site["id"], "status": "cloud_pending"}
+def _engine() -> Engine:
+    return create_engine(settings.database_url)
 
-    bands = fetch_bands(polygon, scene)
-    sr_bands, sr_method = upscale_bands(bands)
 
-    result: dict = {
-        "site_id": site["id"],
-        "scene_id": scene.item_id,
-        "acquired": scene.acquired.isoformat(),
-        "cloud_cover": scene.cloud_cover,
-        "sr_method": sr_method,
-        "status": "ok",
-    }
+def _indices(bands: dict[str, np.ndarray]) -> list[np.ndarray]:
+    return [ndvi(bands), ndbi(bands), bsi(bands)]
 
-    if site.get("prev_features_json"):
-        prev = json.loads(site["prev_features_json"])
-        # NOTE v0.1 : features precedentes stockees compressees en base (voir roadmap dette technique)
-        change = change_score(prev, sr_bands)  # type: ignore[arg-type]
-        built_ratio = change.changed_pixels / max(change.total_pixels, 1)
-        decision = classify(
-            built_ratio=built_ratio,
-            delta_ndbi_mean=change.delta_ndbi_mean,
-            delta_bsi_mean=change.delta_bsi_mean,
-            change_score_value=change.score,
-            sr_method=sr_method,
-        )
-        result.update(
-            change_score=round(change.score, 4),
-            milestone=int(decision.milestone),
-            milestone_label=MILESTONE_LABELS_FR[decision.milestone],
-            confidence=decision.confidence,
-            low_confidence=decision.low_confidence,
-        )
+
+def _get_site(engine: Engine, site_id: int) -> dict:
+    with engine.begin() as c:
+        row = c.execute(text("SELECT id, name, owner_email, polygon_geojson FROM sites WHERE id=:i"),
+                        {"i": site_id}).mappings().first()
+    if row is None:
+        raise ValueError(f"chantier {site_id} introuvable")
+    return dict(row)
+
+
+def _load_frame_row(engine: Engine, site_id: int, kind: str) -> dict[str, np.ndarray] | None:
+    with engine.begin() as c:
+        row = c.execute(text("SELECT data FROM frame_store WHERE site_id=:i AND kind=:k"),
+                        {"i": site_id, "k": kind}).first()
+    return obs.load_frame(bytes(row[0])) if row else None
+
+
+def _save_frame(engine: Engine, site_id: int, kind: str, bands: dict[str, np.ndarray]) -> None:
+    data = obs.dump_frame(bands)
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM frame_store WHERE site_id=:i AND kind=:k"), {"i": site_id, "k": kind})
+        c.execute(text("INSERT INTO frame_store (site_id, kind, data) VALUES (:i, :k, :d)"),
+                  {"i": site_id, "k": kind, "d": data})
+
+
+def _last_milestone(engine: Engine, site_id: int) -> int:
+    with engine.begin() as c:
+        row = c.execute(text("SELECT COALESCE(MAX(milestone), -1) FROM observations WHERE site_id=:i"),
+                        {"i": site_id}).first()
+    return int(row[0])
+
+
+def _persist_observation(
+    engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
+    anchor_idx: list[np.ndarray] | None, sr_method: str,
+) -> dict:
+    """Calcule indicateurs vs ancre, persiste observation + alerte si jalon franchi."""
+    curr_idx = _indices(bands)
+    if anchor_idx is None:  # premiere scene = ancre, baseline sans comparaison
+        payload = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
+                   "cloud_cover": scene.cloud_cover, "sr_method": sr_method, "status": "baseline"}
+        milestone, pivot, confidence, growth = 0, False, 0.9, 0.0
     else:
-        result["status"] = "baseline_created"  # 1re observation = reference bi-temporelle
+        pvs, divs = [], []
+        for a, c in zip(anchor_idx, curr_idx):
+            pv, div = obs.pv_div(a, c)
+            pvs.append(pv)
+            divs.append(div)
+        pvs0 = [np.zeros_like(p) for p in pvs]  # PV0 = 0 par definition vs ancre
+        milestone, pivot, growth = obs.milestone_decision(pvs0, pvs, divs)
+        progress = float(np.mean([obs.compute_div_progress(np.where(d < 0, 0.0, d), np.where(d < 0, 0.0, d))
+                                  if False else 0.0 for d in divs]))  # placeholder remplace ci-dessous
+        activ = float(np.mean([np.abs(d).mean() for d in divs]))
+        emprise = obs.robust_frac_joint(pvs)
+        payload = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
+                   "cloud_cover": scene.cloud_cover, "sr_method": sr_method, "status": "ok",
+                   "emprise": round(emprise, 4), "croissance": round(growth, 4),
+                   "activite": round(activ, 5),
+                   "pv_progress": round(obs.compute_div_progress(np.clip(divs[1], 0, None) * 0 + pvs[1],
+                                                                 np.clip(divs[1], 0, None) + pvs[1] - pvs[1]), 1)
+                          if False else round(min(emprise * 100.0, 130.0), 1)}
+        confidence = 0.8 if sr_method == "sen2sr" else 0.55
+    png = obs.image_png_rgb(bands)
+    label = MILESTONE_LABELS_FR[milestone]
+    payload.update(milestone=milestone, milestone_label=label, pivot_confirme=pivot,
+                   confidence=confidence)
+    with engine.begin() as c:
+        cur = c.execute(
+            text("INSERT INTO observations (site_id, obs_date, milestone, pivot_confirme, confidence, payload, image_png, created_at)"
+                 " VALUES (:s, :d, :m, :p, :cf, :pl, :img, :t)"),
+            {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
+             "cf": confidence, "pl": json.dumps(payload), "img": png,
+             "t": datetime.now(timezone.utc)})
+        obs_id = cur.lastrowid if hasattr(cur, "lastrowid") else None
+        prev_max = _last_milestone(engine, site_id)
+    if milestone > _last_milestone(engine, site_id) - 0 and milestone > prev_max:
+        msg = f"Jalon atteint : {label} (M{milestone})"
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO alerts (site_id, channel, message, milestone, sent_at)"
+                           " VALUES (:s, 'in-app', :m, :ms, :t)"),
+                      {"s": site_id, "m": msg, "ms": milestone, "t": datetime.now(timezone.utc)})
+        logger.info("site %s : %s", site_id, msg)
+    return {"observation_id": obs_id, **payload}
 
-    return result
+
+def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> dict:
+    """Backfill d'archive : scenes les moins nuageuses, ancre t0, jalons par scene.
+    Archive backfill: least-cloudy scenes, t0 anchor, per-scene milestones vs anchor.
+    """
+    engine = engine or _engine()
+    site = _get_site(engine, site_id)
+    with engine.begin() as c:
+        c.execute(text("UPDATE sites SET backfill_status='running', backfill_error=NULL WHERE id=:i"),
+                  {"i": site_id})
+    try:
+        polygon = json.loads(site["polygon_geojson"])
+        ctx = StacContext()
+        scenes = ctx.search_scenes(polygon, limit=limit)
+        if not scenes:
+            raise RuntimeError("aucune scene sous le seuil de nuages dans la fenetre")
+        results, anchor_idx = [], None
+        for scene in scenes:
+            bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scene))
+            if anchor_idx is None:
+                anchor_idx = _indices(bands)
+                _save_frame(engine, site_id, "anchor", bands)
+            _save_frame(engine, site_id, "prev", bands)
+            results.append(_persist_observation(engine, site_id, scene, bands, anchor_idx, sr_method))
+        status = "done" if len(scenes) >= 2 else "baseline_only"
+        with engine.begin() as c:
+            c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
+        return {"site_id": site_id, "status": status, "scenes": len(results), "results": results}
+    except Exception as exc:  # noqa: BLE001 — trace en base, jamais silencieux
+        logger.exception("backfill site %s", site_id)
+        with engine.begin() as c:
+            c.execute(text("UPDATE sites SET backfill_status='error', backfill_error=:e WHERE id=:i"),
+                      {"e": str(exc)[:500], "i": site_id})
+        raise
 
 
-def run_once() -> None:
-    engine = create_engine(settings.database_url)
-    with engine.begin() as conn:
-        sites = conn.execute(
-            text("SELECT id, name, owner_email, polygon_geojson, prev_features_json "
-                 "FROM sites WHERE status = 'active'")
-        ).mappings().all()
-        for site in sites:
-            try:
-                obs = process_site(dict(site))
-                conn.execute(
-                    text("INSERT INTO observations (site_id, payload, created_at) "
-                         "VALUES (:sid, :payload, :ts)"),
-                    {"sid": obs["site_id"], "payload": json.dumps(obs),
-                     "ts": datetime.now(timezone.utc)},
-                )
-                logger.info("site %s -> %s", obs["site_id"], obs["status"])
-            except Exception:  # noqa: BLE001 — isolation par site, erreur tracee
-                logger.exception("echec traitement site %s", site["id"])
+def check_site(engine: Engine | None, site_id: int) -> dict:
+    """Verification manuelle : scene la plus recente vs ancre t0 (ou baseline si 1re fois)."""
+    engine = engine or _engine()
+    site = _get_site(engine, site_id)
+    polygon = json.loads(site["polygon_geojson"])
+    ctx = StacContext()
+    scenes = ctx.search_scenes(polygon, limit=1, window_days=settings.search_window_days)
+    if not scenes:
+        return {"site_id": site_id, "status": "cloud_pending"}
+    bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scenes[0]))
+    anchor = _load_frame_row(engine, site_id, "anchor")
+    if anchor is None:
+        _save_frame(engine, site_id, "anchor", bands)
+        anchor_idx = None
+    else:
+        anchor_idx = _indices(anchor)
+    _save_frame(engine, site_id, "prev", bands)
+    result = _persist_observation(engine, site_id, scenes[0], bands, anchor_idx, sr_method)
+    return {"site_id": site_id, **result}
+
+
+def run_once(engine: Engine | None = None) -> None:
+    """Mode cron : check les chantiers avec ancre, backfill court (3 scenes) sinon."""
+    engine = engine or _engine()
+    with engine.begin() as c:
+        ids = [r[0] for r in c.execute(text("SELECT id FROM sites WHERE status='active'"))]
+    for sid in ids:
+        try:
+            if _load_frame_row(engine, sid, "anchor"):
+                check_site(engine, sid)
+            else:
+                backfill_site(engine, sid, limit=3)
+        except Exception:  # noqa: BLE001
+            logger.exception("echec site %s", sid)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Housat worker")
-    parser.add_argument("--once", action="store_true", help="un seul passage (cron)")
-    args = parser.parse_args()
-    if args.once:
+    p = argparse.ArgumentParser(description="Housat worker")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--backfill", type=int, metavar="SITE_ID")
+    p.add_argument("--check", type=int, metavar="SITE_ID")
+    args = p.parse_args()
+    if args.backfill:
+        backfill_site(None, args.backfill)
+    elif args.check:
+        check_site(None, args.check)
+    elif args.once:
         run_once()
     else:
-        parser.error("v0.1 : seul --once est supporte (cron GitHub Actions)")
+        p.error("specifier --once, --backfill SITE_ID ou --check SITE_ID")
 
 
 if __name__ == "__main__":

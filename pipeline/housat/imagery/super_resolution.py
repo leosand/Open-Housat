@@ -19,9 +19,6 @@ except ImportError:
     HAS_SEN2SR = False
 
 
-@dataclass_placeholder = None
-
-
 def upscale_bands(
     bands: dict[str, np.ndarray], factor: int = 4
 ) -> tuple[dict[str, np.ndarray], str]:
@@ -35,7 +32,7 @@ def upscale_bands(
         return out, "sen2sr"
 
     logger.warning("SEN2SR indisponible — fallback bicubique, confiance reduite")
-    from skimage.transform import resize  # scikit-image via scikit-learn stack
+    from skimage.transform import resize
 
     out = {
         k: resize(v, (v.shape[0] * factor, v.shape[1] * factor), order=3, anti_aliasing=True).astype(np.float32)

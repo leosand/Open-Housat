@@ -1,5 +1,5 @@
-"""API Housat MVP-l2 — FastAPI, RFC 7807, backfill 202 + polling, images PNG,
-comparaison avant/apres entre periodes (/compare)."""
+"""API Housat MVP-l3 — FastAPI, RFC 7807, backfill 202, /compare avant-apres,
+image_bbox expose pour overlay carte (MapLibre)."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.3.0-mvp-l2",
-              description="MVP : backfill archive, jalons V&V pivot, comparaison avant/apres.")
+app = FastAPI(title="Housat API", version="0.4.0-mvp-l3",
+              description="MVP : backfill, jalons V&V, avant/apres, overlays carte georeferences.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -67,8 +67,7 @@ def _validate_bbox(b: SiteIn) -> None:
 
 
 def _pv_sum(payload: str) -> float:
-    p = json.loads(payload or "{}")
-    return float(p.get("pv_sum", 0.0))
+    return float(json.loads(payload or "{}").get("pv_sum", 0.0))
 
 
 def _summary(o: Observation) -> dict:
@@ -76,6 +75,7 @@ def _summary(o: Observation) -> dict:
     return {"id": o.id, "obs_date": o.obs_date, "milestone": o.milestone,
             "milestone_label": p.get("milestone_label"), "pivot_confirme": o.pivot_confirme,
             "confidence": o.confidence, "emprise": p.get("emprise"), "pv_sum": p.get("pv_sum"),
+            "image_bbox": p.get("image_bbox"),
             "image_url": f"/observations/{o.id}/image" if o.image_png is not None else None}
 
 
@@ -162,9 +162,7 @@ def progress(site_id: int, session: SessionDep) -> dict:
 @app.get("/sites/{site_id}/compare")
 def compare(site_id: int, session: SessionDep,
             from_id: int = Query(alias="from"), to_id: int = Query(alias="to")) -> dict:
-    """Comparaison avant/apres entre deux observations (meme chantier, grilles alignees).
-    Before/after between two periods — images post-SR + deltas metriques.
-    """
+    """Comparaison avant/apres (meme chantier, grilles alignees, coins d'image pour la carte)."""
     if session.get(Site, site_id) is None:
         raise HTTPException(404, "chantier introuvable / site not found")
     if from_id == to_id:

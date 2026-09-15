@@ -23,6 +23,8 @@ button.link { background: none; color: #2563eb; padding: 0; text-decoration: und
 .obsgrid img, .noimg { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #e2e5ea; background: #eef1f4; }
 .noimg { display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 0.8rem; }
 .obsgrid figcaption { font-size: 0.78rem; color: #4b5563; margin-top: 0.25rem; }
+/* Carte (MapLibre + OSM) */
+.mapbox { width: 100%; border-radius: 10px; border: 1px solid #e2e5ea; margin: 0.5rem 0; }
 /* Comparateur avant/apres */
 .comparebox { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid #e2e5ea; }
 .cmp { display: block; width: 100%; }

@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import MapView from './MapView'
 
 const API: string = (import.meta as unknown as { env: Record<string, string | undefined> }).env
   .VITE_API_URL ?? 'http://localhost:8000'
 
-interface Site { id: number; name: string; backfill_status: string; created_at: string }
+type BBox = [number, number, number, number]
+
+interface GeoPolygon { type: 'Polygon'; coordinates: number[][][] }
+
+interface Site {
+  id: number; name: string; backfill_status: string; created_at: string
+  polygon_geojson: string
+}
 
 interface Progress {
   backfill_status: string; backfill_error: string | null
@@ -15,6 +23,7 @@ interface Progress {
 interface Observation {
   id: number; obs_date: string; milestone: number | null; milestone_label: string | null
   pivot_confirme: boolean; confidence: number; image_url: string | null
+  image_bbox: BBox | null
 }
 
 interface AlertItem { id: number; message: string; sent_at: string }
@@ -94,12 +103,16 @@ function CompareSlider({ a, b }: { a: Observation; b: Observation }) {
   )
 }
 
-function ComparePanel({ siteId, obs }: { siteId: number; obs: Observation[] }) {
-  const chrono = [...obs].reverse()  // API renvoie desc
+function ComparePanel({ siteId, polygon, obs }: {
+  siteId: number; polygon: GeoPolygon; obs: Observation[]
+}) {
+  const chrono = [...obs].reverse()
   const [fromId, setFromId] = useState<number | ''>('')
   const [toId, setToId] = useState<number | ''>('')
   const [result, setResult] = useState<CompareResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fadeFrom, setFadeFrom] = useState(0.9)
+  const [fadeTo, setFadeTo] = useState(0.0)
 
   useEffect(() => {
     if (chrono.length >= 2) {
@@ -118,6 +131,15 @@ function ComparePanel({ siteId, obs }: { siteId: number; obs: Observation[] }) {
   if (chrono.length < 2) {
     return <p className="hint">La comparaison avant/apres sera disponible apres 2 observations.</p>
   }
+  const overlays = result ? {
+    from: result.from.image_url && result.from.image_bbox
+      ? { url: `${API}${result.from.image_url}`, bbox: result.from.image_bbox, opacity: fadeFrom }
+      : undefined,
+    to: result.to.image_url && result.to.image_bbox
+      ? { url: `${API}${result.to.image_url}`, bbox: result.to.image_bbox, opacity: fadeTo }
+      : undefined,
+  } : {}
+
   return (
     <section>
       <h3>Avant / Apres (periodes au choix)</h3>
@@ -136,6 +158,19 @@ function ComparePanel({ siteId, obs }: { siteId: number; obs: Observation[] }) {
       {error && <p role="alert" className="error">{error}</p>}
       {result && (
         <>
+          <MapView polygon={polygon} overlays={overlays} />
+          <div className="actions">
+            <label>Calque Avant
+              <input type="range" min={0} max={1} step={0.05} value={fadeFrom}
+                     aria-label="Opacite calque avant"
+                     onChange={(e) => setFadeFrom(Number(e.target.value))} />
+            </label>
+            <label>Calque Apres
+              <input type="range" min={0} max={1} step={0.05} value={fadeTo}
+                     aria-label="Opacite calque apres"
+                     onChange={(e) => setFadeTo(Number(e.target.value))} />
+            </label>
+          </div>
           <CompareSlider a={result.from} b={result.to} />
           <dl className="metrics">
             <dt>Jalon avant</dt><dd>{result.from.milestone_label ?? '—'}</dd>
@@ -155,6 +190,7 @@ function Dashboard({ site }: { site: Site }) {
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [msg, setMsg] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const polygon = JSON.parse(site.polygon_geojson) as GeoPolygon
 
   const refresh = useCallback(async () => {
     const [p, o, a] = await Promise.all([
@@ -214,7 +250,7 @@ function Dashboard({ site }: { site: Site }) {
           <dt>Observations</dt><dd>{progress.observations}</dd>
         </dl>
       )}
-      <ComparePanel siteId={site.id} obs={obs} />
+      <ComparePanel siteId={site.id} polygon={polygon} obs={obs} />
       {alerts.length > 0 && (
         <section>
           <h3>Alertes</h3>
@@ -247,7 +283,7 @@ export default function App() {
   return (
     <main>
       <h1>Housat — MVP local</h1>
-      <p className="hint">Verification satellite de chantiers : backfill archive, jalons M0-M4, avant/apres.</p>
+      <p className="hint">Verification satellite de chantiers : carte OSM, jalons M0-M4, avant/apres.</p>
       {!selected ? (
         <>
           <SiteForm onCreated={(s) => { setSites([s, ...sites]); setSelected(s) }} />

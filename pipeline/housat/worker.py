@@ -1,7 +1,6 @@
-"""Orchestrateur MVP-l2 : backfill d'archive + verification manuelle, frames ancrees t0.
+"""Orchestrateur MVP-l3 : backfill d'archive + verification manuelle, frames ancrees t0.
 Comparaison vs ancre avec alignement de grille (match_shape), jalons V&V pivot,
-pv_sum honnete dans le payload (progression calculable entre periodes arbitraires),
-alertes in-app monotones. Pas de canal externe en MVP.
+pv_sum honnete, bbox de l'image persistee (overlay carte fidele), alertes in-app monotones.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 import numpy as np
+from shapely.geometry import shape
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -35,6 +35,11 @@ def _engine() -> Engine:
 
 def _indices(bands: dict[str, np.ndarray]) -> list[np.ndarray]:
     return [ndvi(bands), ndbi(bands), bsi(bands)]
+
+
+def _bbox4326(polygon: dict) -> list[float]:
+    """Emprise de l'image clippee = bbox du polygone (crop rasterio = etendue geometrie)."""
+    return [round(v, 6) for v in shape(polygon).bounds]
 
 
 def _get_site(engine: Engine, site_id: int) -> dict:
@@ -70,13 +75,14 @@ def _max_milestone(engine: Engine, site_id: int) -> int:
 
 def _persist_observation(
     engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
-    anchor_idx: list[np.ndarray] | None, sr_method: str,
+    anchor_idx: list[np.ndarray] | None, sr_method: str, image_bbox: list[float],
 ) -> dict:
     """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone."""
+    base: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
+                  "cloud_cover": scene.cloud_cover, "sr_method": sr_method,
+                  "image_bbox": image_bbox}
     if anchor_idx is None:  # premiere scene = ancre, baseline sans comparaison
-        payload: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
-                         "cloud_cover": scene.cloud_cover, "sr_method": sr_method,
-                         "status": "baseline"}
+        payload = {**base, "status": "baseline"}
         milestone, pivot, confidence = 0, False, 0.9
     else:
         bands = obs.match_shape(bands, anchor_idx[0].shape)  # alignement grille (fix V&V)
@@ -87,13 +93,11 @@ def _persist_observation(
             divs.append(div)
         milestone, pivot, growth = obs.milestone_decision(
             [np.zeros_like(p) for p in pvs], pvs, divs)
-        emprise = obs.robust_frac_joint(pvs)
-        pv_sum = float(sum(obs.masked_sum(p) for p in pvs))
-        payload = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
-                   "cloud_cover": scene.cloud_cover, "sr_method": sr_method, "status": "ok",
-                   "emprise": round(emprise, 4), "croissance": round(growth, 4),
+        payload = {**base, "status": "ok",
+                   "emprise": round(obs.robust_frac_joint(pvs), 4),
+                   "croissance": round(growth, 4),
                    "activite": round(float(np.mean([np.abs(d).mean() for d in divs])), 5),
-                   "pv_sum": round(pv_sum, 3)}
+                   "pv_sum": round(float(sum(obs.masked_sum(p) for p in pvs)), 3)}
         confidence = 0.8 if sr_method == "sen2sr" else 0.55
     png = obs.image_png_rgb(bands)
     prev_max = _max_milestone(engine, site_id)
@@ -106,7 +110,7 @@ def _persist_observation(
             {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
              "cf": confidence, "pl": json.dumps(payload), "img": png,
              "t": datetime.now(timezone.utc)})
-        if milestone > prev_max:  # alertes monotones : jamais de regression signalee
+        if milestone > prev_max:  # alertes monotones
             msg = f"Jalon atteint : {MILESTONE_LABELS_FR[milestone]} (M{milestone})"
             c.execute(text("INSERT INTO alerts (site_id, channel, message, milestone, sent_at)"
                            " VALUES (:s, 'in-app', :m, :ms, :t)"),
@@ -124,6 +128,7 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
                   {"i": site_id})
     try:
         polygon = json.loads(site["polygon_geojson"])
+        bbox = _bbox4326(polygon)
         ctx = StacContext()
         scenes = ctx.search_scenes(polygon, limit=limit)
         if not scenes:
@@ -135,7 +140,8 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
                 anchor_idx = _indices(bands)
                 _save_frame(engine, site_id, "anchor", bands)
             _save_frame(engine, site_id, "prev", bands)
-            results.append(_persist_observation(engine, site_id, scene, bands, anchor_idx, sr_method))
+            results.append(_persist_observation(engine, site_id, scene, bands, anchor_idx,
+                                                sr_method, bbox))
         with engine.begin() as c:
             c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
         return {"site_id": site_id, "status": "done" if len(scenes) >= 2 else "baseline_only",
@@ -165,7 +171,8 @@ def check_site(engine: Engine | None, site_id: int) -> dict:
     else:
         anchor_idx = _indices(anchor)
     _save_frame(engine, site_id, "prev", bands)
-    result = _persist_observation(engine, site_id, scenes[0], bands, anchor_idx, sr_method)
+    result = _persist_observation(engine, site_id, scenes[0], bands, anchor_idx,
+                                  sr_method, _bbox4326(polygon))
     return {"site_id": site_id, **result}
 
 

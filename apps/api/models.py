@@ -1,4 +1,9 @@
-"""Modeles SQLModel MVP-l4 / Data models — PostGIS en prod, SQLite en dev local."""
+"""Modeles SQLModel MVP-l4 / Data models — PostGIS en prod, SQLite en dev local.
+
+V&V 2026-09-15 : les colonnes binaires (image_png, pdf) sont en chargement DIFFERE
+(deferred) — sinon chaque liste (/observations, /reports) chargerait tous les BLOB
+en memoire pour rien. La lecture explicite declenche un lazy-load ponctuel.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +39,8 @@ class Observation(SQLModel, table=True):
     pivot_confirme: bool = Field(default=False)
     confidence: float = Field(default=0.0)
     payload: str = Field(default="")
-    image_png: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))
+    image_png: Optional[bytes] = Field(default=None,
+                                       sa_column=Column(LargeBinary, deferred=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -55,10 +61,11 @@ class FrameStore(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     site_id: int = Field(foreign_key="sites.id", index=True)
     kind: str = Field(index=True)
-    data: bytes = Field(sa_column=Column(LargeBinary))
+    data: bytes = Field(sa_column=Column(LargeBinary, deferred=True))
 
 
 class Report(SQLModel, table=True):
+    """Rapport PDF hebdomadaire persiste — un par (chantier, semaine ISO)."""
     __tablename__ = "reports"
     __table_args__ = (UniqueConstraint("site_id", "week_start", name="uq_report_site_week"),)
 
@@ -68,5 +75,5 @@ class Report(SQLModel, table=True):
     week_end: str
     sha256: str = Field(max_length=64)
     observations_count: int = Field(default=0)
-    pdf: bytes = Field(sa_column=Column(LargeBinary))
+    pdf: bytes = Field(sa_column=Column(LargeBinary, deferred=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

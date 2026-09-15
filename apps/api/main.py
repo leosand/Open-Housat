@@ -24,7 +24,10 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.5.3-mvp-l4",
+# Contenu immuable : id observation / (site, semaine) ne changent jamais apres ecriture.
+IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
+app = FastAPI(title="Housat API", version="0.5.4-mvp-l4",
               description="MVP : backfill, jalons V&V, avant/apres, carte, rapports PDF hebdo.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -94,13 +97,20 @@ def _pv_sum(payload: str) -> float:
     return float(json.loads(payload or "{}").get("pv_sum", 0.0))
 
 
-def _summary(o: Observation) -> dict:
+def _images_present(session: Session, site_id: int) -> set:
+    """Ids d'observations avec image, SANS charger les BLOB (colonne deferree)."""
+    return set(session.exec(
+        select(Observation.id).where(Observation.site_id == site_id,
+                                     Observation.image_png.is_not(None))))  # type: ignore[union-attr]
+
+
+def _summary(o: Observation, has_image: bool) -> dict:
     p = json.loads(o.payload or "{}")
     return {"id": o.id, "obs_date": o.obs_date, "milestone": o.milestone,
             "milestone_label": p.get("milestone_label"), "pivot_confirme": o.pivot_confirme,
             "confidence": o.confidence, "emprise": p.get("emprise"), "pv_sum": p.get("pv_sum"),
             "image_bbox": p.get("image_bbox"),
-            "image_url": f"/observations/{o.id}/image" if o.image_png is not None else None}
+            "image_url": f"/observations/{o.id}/image" if has_image else None}
 
 
 def _parse_week(week: str) -> date:
@@ -226,10 +236,11 @@ def compare(site_id: int, session: SessionDep,
         raise HTTPException(404, "observation introuvable pour ce chantier")
     va, vb = _pv_sum(a.payload), _pv_sum(b.payload)
     progression = round(100.0 * min(vb / max(va, 1e-6), 1.3), 1) if va > 0 else 0.0
-    return {"from": _summary(a), "to": _summary(b), "delta": {
-        "progression": progression,
-        "milestone_from": a.milestone, "milestone_to": b.milestone,
-        "pivot_confirme": b.pivot_confirme}}
+    present = _images_present(session, site_id)
+    return {"from": _summary(a, a.id in present), "to": _summary(b, b.id in present),
+            "delta": {"progression": progression,
+                      "milestone_from": a.milestone, "milestone_to": b.milestone,
+                      "pivot_confirme": b.pivot_confirme}}
 
 
 @app.get("/sites/{site_id}/observations")
@@ -238,7 +249,8 @@ def list_observations(site_id: int, session: SessionDep, limit: int = 60) -> lis
         raise HTTPException(404, "chantier introuvable / site not found")
     rows = session.exec(select(Observation).where(Observation.site_id == site_id)
                         .order_by(Observation.obs_date.desc(), Observation.id.desc()).limit(min(limit, 100)))  # type: ignore[attr-defined]
-    return [_summary(o) for o in rows]
+    present = _images_present(session, site_id)
+    return [_summary(o, o.id in present) for o in rows]
 
 
 @app.get("/observations/{obs_id}/image")
@@ -246,7 +258,8 @@ def observation_image(obs_id: int, session: SessionDep) -> Response:
     o = session.get(Observation, obs_id)
     if o is None or o.image_png is None:
         raise HTTPException(404, "image introuvable")
-    return Response(content=bytes(o.image_png), media_type="image/png")
+    return Response(content=bytes(o.image_png), media_type="image/png",
+                    headers={"Cache-Control": IMMUTABLE_CACHE})
 
 
 @app.get("/sites/{site_id}/alerts")
@@ -283,7 +296,8 @@ def report_pdf(site_id: int, week: str, session: SessionDep) -> Response:
     return Response(content=bytes(r.pdf), media_type="application/pdf",
                     headers={"Content-Disposition":
                              f'attachment; filename="housat-{site_id}-{r.week_start}.pdf"',
-                             "ETag": f'"{r.sha256}"'})
+                             "ETag": f'"{r.sha256}"',
+                             "Cache-Control": IMMUTABLE_CACHE})
 
 
 @app.post("/sites/{site_id}/reports/{week}", status_code=status.HTTP_201_CREATED)

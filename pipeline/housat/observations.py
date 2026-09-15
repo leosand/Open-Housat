@@ -6,6 +6,7 @@ Indicateurs (spec MVP-l1) :
   emprise robuste m = { PV > q80(PV>0) }
   progression entre periodes = 100 * pv_sum(t2) / pv_sum(t1), cap 130 %
   pivot qualifie : dPRA > 0.15 ET |moyenne negative| << PRA
+    (queue negative absente <=> negligeable, mean_neg = 0)
 """
 
 from __future__ import annotations
@@ -93,11 +94,12 @@ def compute_div_progress(div0: np.ndarray, div_t: np.ndarray, cap: float = 1.3) 
 
 
 def detect_pivot_pv(div: np.ndarray, pv_t: np.ndarray, *, eps: float = 1e-3) -> dict[str, float | bool]:
-    """Pivot qualifie : dPRA > 0.15 et queue negative negligeable (|moyenne| << PRA)."""
+    """Pivot qualifie : dPRA > 0.15 et queue negative negligeable (|moyenne| << PRA).
+    Absence de pixels negatifs <=> queue nulle (mean_neg = 0), donc negligeable."""
     pos, neg = div > eps, div < -eps
     dpra = float(div[pos].sum() / max(float(pv_t[pos].sum()), EPS)) if pos.any() else 0.0
     mean_neg = float(div[neg].mean()) if neg.any() else 0.0
-    qualifie = bool(dpra > 0.15 and neg.any() and abs(mean_neg) < 0.05)
+    qualifie = bool(dpra > 0.15 and abs(mean_neg) < 0.05)
     return {"dpra": dpra, "mean_neg": mean_neg, "qualifie": qualifie}
 
 

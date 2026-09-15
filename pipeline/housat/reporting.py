@@ -20,6 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -108,6 +109,15 @@ def _footer(canvas: Any, doc: Any) -> None:
     canvas.restoreState()
 
 
+def _image_flowable(png: bytes) -> Image:
+    """Image au ratio d'aspect preserve (fenetre de clip non necessairement carree)."""
+    reader = ImageReader(io.BytesIO(bytes(png)))
+    iw, ih = reader.getSize()
+    width = 64 * mm
+    height = width * ih / iw if iw else width
+    return Image(io.BytesIO(bytes(png)), width=width, height=height)
+
+
 def render_weekly_pdf(
     site: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -161,8 +171,7 @@ def render_weekly_pdf(
         story.append(Paragraph(_latin1("Avant / apres (semaine)"), h2))
         cells = []
         for r, tag in ((imgs[0], "Debut"), (imgs[-1], "Fin")):
-            cells.append([Image(io.BytesIO(bytes(r["image_png"])),
-                                width=64 * mm, height=64 * mm),
+            cells.append([_image_flowable(r["image_png"]),
                           Paragraph(_latin1(f"{tag} : {str(r.get('obs_date', ''))[:10]}"), small)])
         it = Table([cells], colWidths=[82 * mm, 82 * mm])
         it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
@@ -227,10 +236,14 @@ def render_weekly_pdf(
 
 
 def ensure_report_table(engine: Engine) -> None:
-    """Cree la table reports si absente (le worker tourne sans l'API en CI cron)."""
+    """Cree la table reports si absente (le worker tourne sans l'API en CI cron).
+    Le DDL suit le modele SQLModel (TIMESTAMP sous PostgreSQL) pour eviter toute derive
+    de schema entre le chemin worker et le chemin API.
+    """
     lite = engine.dialect.name == "sqlite"
     pk = "INTEGER PRIMARY KEY AUTOINCREMENT" if lite else "SERIAL PRIMARY KEY"
     blob = "BLOB" if lite else "BYTEA"
+    ts = "VARCHAR(32)" if lite else "TIMESTAMP"
     ddl = f"""
     CREATE TABLE IF NOT EXISTS reports (
         id {pk},
@@ -240,7 +253,7 @@ def ensure_report_table(engine: Engine) -> None:
         sha256 VARCHAR(64) NOT NULL,
         observations_count INTEGER NOT NULL DEFAULT 0,
         pdf {blob} NOT NULL,
-        created_at VARCHAR(32) NOT NULL,
+        created_at {ts} NOT NULL,
         CONSTRAINT uq_report_site_week UNIQUE (site_id, week_start)
     )
     """
@@ -288,7 +301,7 @@ def build_weekly_report(engine: Engine, site_id: int, week_start: date) -> dict[
                                   f"semaine {week_start.isoformat()}")
     pdf = render_weekly_pdf(site, rows, alerts, week_start, week_end)
     digest = hashlib.sha256(pdf).hexdigest()
-    # SQLite (sqlalchemy DATETIME) et PostgreSQL (TIMESTAMP) acceptent ce format, sans tz naive.
+    # Format TIMESTAMP partage : compatible SQLAlchemy DATETIME (SQLite) et TIMESTAMP (PG).
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
     try:
         with engine.begin() as c:

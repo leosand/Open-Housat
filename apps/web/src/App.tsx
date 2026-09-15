@@ -33,6 +33,11 @@ interface CompareResult {
   delta: { progression: number; milestone_from: number | null; milestone_to: number | null; pivot_confirme: boolean }
 }
 
+interface ReportMeta {
+  id: number; week_start: string; week_end: string
+  observations: number; sha256: string; pdf_url: string
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json' }, ...init })
   if (!r.ok) {
@@ -184,6 +189,61 @@ function ComparePanel({ siteId, polygon, obs }: {
   )
 }
 
+function lastWeekMonday(): string {
+  // Lundi de la semaine ISO ecoulee (UTC) — correspond a la validation cote API
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) - 7)
+  return d.toISOString().slice(0, 10)
+}
+
+function ReportsPanel({ siteId }: { siteId: number }) {
+  const [reports, setReports] = useState<ReportMeta[]>([])
+  const [msg, setMsg] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    api<ReportMeta[]>(`/sites/${siteId}/reports`).then(setReports).catch(() => undefined)
+  }, [siteId])
+  useEffect(() => { load() }, [load])
+
+  const generate = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      await api<ReportMeta>(`/sites/${siteId}/reports/${lastWeekMonday()}`, { method: 'POST' })
+      load()
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'erreur')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section>
+      <h3>Rapports PDF hebdomadaires</h3>
+      <div className="actions">
+        <button className="secondary" onClick={generate} disabled={busy}>
+          {busy ? 'Generation…' : 'Generer le rapport de la semaine derniere'}
+        </button>
+      </div>
+      {msg && <p role="alert" className="error">{msg}</p>}
+      {reports.length > 0 && (
+        <ul>
+          {reports.map(r => (
+            <li key={r.id}>
+              <a href={`${API}${r.pdf_url}`} download>
+                Semaine du {r.week_start} au {r.week_end}
+              </a>
+              <span className="hint"> ({r.observations} observations)</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function Dashboard({ site }: { site: Site }) {
   const [progress, setProgress] = useState<Progress | null>(null)
   const [obs, setObs] = useState<Observation[]>([])
@@ -251,6 +311,7 @@ function Dashboard({ site }: { site: Site }) {
         </dl>
       )}
       <ComparePanel siteId={site.id} polygon={polygon} obs={obs} />
+      <ReportsPanel siteId={site.id} />
       {alerts.length > 0 && (
         <section>
           <h3>Alertes</h3>
@@ -283,7 +344,7 @@ export default function App() {
   return (
     <main>
       <h1>Housat — MVP local</h1>
-      <p className="hint">Verification satellite de chantiers : carte OSM, jalons M0-M4, avant/apres.</p>
+      <p className="hint">Verification satellite de chantiers : carte OSM, jalons M0-M4, avant/apres, rapports PDF.</p>
       {!selected ? (
         <>
           <SiteForm onCreated={(s) => { setSites([s, ...sites]); setSelected(s) }} />

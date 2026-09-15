@@ -6,6 +6,7 @@ scikit-image>=0.23
 shapely>=2.0
 pyproj>=3.6
 Pillow>=10.2
+reportlab>=4.2
 pydantic>=2.6
 pydantic-settings>=2.2
 SQLAlchemy>=2.0

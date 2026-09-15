@@ -1,10 +1,11 @@
-"""API Housat MVP-l3 — FastAPI, RFC 7807, backfill 202, /compare avant-apres,
-image_bbox expose pour overlay carte (MapLibre)."""
+"""API Housat MVP-l4 — FastAPI, RFC 7807, /compare avant-apres, overlays carte (MapLibre),
+rapports PDF hebdomadaires persistes (reportlab, integrite sha256)."""
 
 from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, status
@@ -13,15 +14,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from housat.reporting import (DuplicateReportError, NoObservationsError, SiteNotFoundError,
+                              build_weekly_report, week_bounds)
 from housat.worker import backfill_site, check_site
-from models import Alert, FrameStore, Observation, Site
+from models import Alert, FrameStore, Observation, Report, Site
 
 DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.4.0-mvp-l3",
-              description="MVP : backfill, jalons V&V, avant/apres, overlays carte georeferences.")
+app = FastAPI(title="Housat API", version="0.5.0-mvp-l4",
+              description="MVP : backfill, jalons V&V, avant/apres, carte, rapports PDF hebdo.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -77,6 +80,27 @@ def _summary(o: Observation) -> dict:
             "confidence": o.confidence, "emprise": p.get("emprise"), "pv_sum": p.get("pv_sum"),
             "image_bbox": p.get("image_bbox"),
             "image_url": f"/observations/{o.id}/image" if o.image_png is not None else None}
+
+
+def _parse_week(week: str) -> date:
+    """Valide une semaine ISO : lundi YYYY-MM-DD, semaine cloturee (pas en cours/future)."""
+    try:
+        d = date.fromisoformat(week)
+    except ValueError as exc:
+        raise HTTPException(422, "week doit etre une date ISO YYYY-MM-DD") from exc
+    if d.weekday() != 0:
+        raise HTTPException(422, "week doit tomber un lundi (debut de semaine ISO)")
+    monday, _ = week_bounds(date.today())
+    if d >= monday:
+        raise HTTPException(422, "semaine ISO non cloturee (en cours ou future)")
+    return d
+
+
+def _report_meta(r: Report) -> dict:
+    return {"id": r.id, "week_start": r.week_start, "week_end": r.week_end,
+            "observations": r.observations_count, "sha256": r.sha256,
+            "created_at": r.created_at.isoformat(),
+            "pdf_url": f"/sites/{r.site_id}/reports/{r.week_start}/pdf"}
 
 
 @app.get("/healthz")
@@ -206,3 +230,47 @@ def frames_state(site_id: int, session: SessionDep) -> dict:
     rows = session.exec(select(FrameStore.kind).where(FrameStore.site_id == site_id))
     kinds = sorted(set(rows))
     return {"anchor": "anchor" in kinds, "prev": "prev" in kinds}
+
+
+@app.get("/sites/{site_id}/reports")
+def list_reports(site_id: int, session: SessionDep) -> list[dict]:
+    if session.get(Site, site_id) is None:
+        raise HTTPException(404, "chantier introuvable / site not found")
+    rows = session.exec(select(Report).where(Report.site_id == site_id)
+                        .order_by(Report.week_start.desc()))  # type: ignore[attr-defined]
+    return [_report_meta(r) for r in rows]
+
+
+@app.get("/sites/{site_id}/reports/{week}/pdf")
+def report_pdf(site_id: int, week: str, session: SessionDep) -> Response:
+    if session.get(Site, site_id) is None:
+        raise HTTPException(404, "chantier introuvable / site not found")
+    d = _parse_week(week)
+    r = session.exec(select(Report).where(Report.site_id == site_id,
+                                          Report.week_start == d.isoformat())).first()
+    if r is None:
+        raise HTTPException(404, "rapport introuvable pour cette semaine")
+    return Response(content=bytes(r.pdf), media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="housat-{site_id}-{r.week_start}.pdf"',
+                             "ETag": f'"{r.sha256}"'})
+
+
+@app.post("/sites/{site_id}/reports/{week}", status_code=status.HTTP_201_CREATED)
+def generate_report(site_id: int, week: str, session: SessionDep) -> dict:
+    """Generation manuelle d'un rapport hebdo (idempotent : 409 si deja genere)."""
+    if session.get(Site, site_id) is None:
+        raise HTTPException(404, "chantier introuvable / site not found")
+    d = _parse_week(week)
+    try:
+        build_weekly_report(engine, site_id, d)
+    except DuplicateReportError as exc:
+        raise HTTPException(409, "rapport deja genere pour cette semaine") from exc
+    except NoObservationsError as exc:
+        raise HTTPException(422, "aucune observation sur cette semaine") from exc
+    except SiteNotFoundError as exc:  # garde-fou (site supprime entre les deux requetes)
+        raise HTTPException(404, "chantier introuvable / site not found") from exc
+    r = session.exec(select(Report).where(Report.site_id == site_id,
+                                          Report.week_start == d.isoformat())).first()
+    assert r is not None  # vient d'etre insere par build_weekly_report
+    return _report_meta(r)

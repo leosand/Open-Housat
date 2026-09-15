@@ -1,6 +1,5 @@
-"""API Housat MVP-l1 — FastAPI, RFC 7807, backfill 202 + polling, images PNG.
-Product API: sites via bbox/GeoJSON, archive backfill, manual check, dashboard data.
-"""
+"""API Housat MVP-l2 — FastAPI, RFC 7807, backfill 202 + polling, images PNG,
+comparaison avant/apres entre periodes (/compare)."""
 
 from __future__ import annotations
 
@@ -8,11 +7,10 @@ import json
 import os
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from housat.worker import backfill_site, check_site
@@ -22,8 +20,8 @@ DATABASE_URL = os.environ.get("HOUSAT_DATABASE_URL", "sqlite:///./housat-dev.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}
                        if DATABASE_URL.startswith("sqlite") else {})
 
-app = FastAPI(title="Housat API", version="0.2.0-mvp-l1",
-              description="MVP-l1 : verification satellite de chantiers — backfill archive, jalons, V&V pivot.")
+app = FastAPI(title="Housat API", version="0.3.0-mvp-l2",
+              description="MVP : backfill archive, jalons V&V pivot, comparaison avant/apres.")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -64,8 +62,21 @@ class SiteIn(BaseModel):
 def _validate_bbox(b: SiteIn) -> None:
     if b.min_lon >= b.max_lon or b.min_lat >= b.max_lat:
         raise HTTPException(422, "bbox invalide : min < max requis")
-    if (b.max_lon - b.min_lon) * (b.max_lat - b.min_lat) > 0.005:  # ~quelques km2 — cap MVP
+    if (b.max_lon - b.min_lon) * (b.max_lat - b.min_lat) > 0.005:
         raise HTTPException(422, "bbox trop grande pour le MVP (max ~2 km2)")
+
+
+def _pv_sum(payload: str) -> float:
+    p = json.loads(payload or "{}")
+    return float(p.get("pv_sum", 0.0))
+
+
+def _summary(o: Observation) -> dict:
+    p = json.loads(o.payload or "{}")
+    return {"id": o.id, "obs_date": o.obs_date, "milestone": o.milestone,
+            "milestone_label": p.get("milestone_label"), "pivot_confirme": o.pivot_confirme,
+            "confidence": o.confidence, "emprise": p.get("emprise"), "pv_sum": p.get("pv_sum"),
+            "image_url": f"/observations/{o.id}/image" if o.image_png is not None else None}
 
 
 @app.get("/healthz")
@@ -100,7 +111,6 @@ def get_site(site_id: int, session: SessionDep) -> Site:
 
 
 def _run_backfill_bg(site_id: int) -> None:
-    """Tache de fond avec engine dedie (thread-separe, jamais la session HTTP)."""
     from sqlalchemy import create_engine as ce
     backfill_site(ce(DATABASE_URL), site_id, limit=10)
 
@@ -118,12 +128,11 @@ def trigger_backfill(site_id: int, background: BackgroundTasks, session: Session
 
 @app.post("/sites/{site_id}/check")
 def trigger_check(site_id: int, session: SessionDep) -> dict:
-    """Verification manuelle synchrone (threadpool) vs ancre t0."""
     if session.get(Site, site_id) is None:
         raise HTTPException(404, "chantier introuvable / site not found")
     try:
         return check_site(engine, site_id)
-    except Exception as exc:  # noqa: BLE001 — remonte en RFC 7807
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"echec verification : {exc}") from exc
 
 
@@ -132,25 +141,43 @@ def progress(site_id: int, session: SessionDep) -> dict:
     site = session.get(Site, site_id)
     if site is None:
         raise HTTPException(404, "chantier introuvable / site not found")
-    obs_rows = list(session.exec(
+    rows = list(session.exec(
         select(Observation).where(Observation.site_id == site_id)
-        .order_by(Observation.created_at.desc()).limit(2)))  # type: ignore[attr-defined]
-    latest = json.loads(obs_rows[0].payload) if obs_rows else None
-    payload0 = json.loads(obs_rows[1].payload) if len(obs_rows) > 1 else None
-    pv0 = float(payload0.get("emprise", 0.0)) if payload0 else 0.0
-    pv = float(latest.get("emprise", 0.0)) if latest else 0.0
-    dpra = float(latest.get("croissance", 0.0)) if latest else 0.0
-    progression = round(min((pv0 / max(pv, 1e-6)) * 100.0, 130.0), 1) if pv > 0 and pv0 > 0 else \
-        round(min(pv * 100.0, 130.0), 1)
+        .order_by(Observation.created_at.asc())))  # type: ignore[attr-defined]
+    compared = [r for r in rows if json.loads(r.payload or "{}").get("status") == "ok"]
+    latest_p = json.loads(rows[-1].payload if rows else "{}")
+    pv_first = _pv_sum(compared[0].payload) if compared else 0.0
+    pv_last = _pv_sum(compared[-1].payload) if compared else 0.0
+    progression = round(100.0 * min(pv_last / max(pv_first, 1e-6), 1.3), 1) if pv_first > 0 else 0.0
     return {
-        "backfill_status": site.backfill_status,
-        "backfill_error": site.backfill_error,
-        "milestone": latest.get("milestone") if latest else None,
-        "milestone_label": latest.get("milestone_label") if latest else None,
-        "pivot_confirme": bool(latest.get("pivot_confirme")) if latest else False,
-        "pv0": pv0, "pv": pv, "delta_pra": dpra, "progression": progression,
-        "observations": len(obs_rows),
+        "backfill_status": site.backfill_status, "backfill_error": site.backfill_error,
+        "milestone": latest_p.get("milestone"), "milestone_label": latest_p.get("milestone_label"),
+        "pivot_confirme": bool(latest_p.get("pivot_confirme", False)),
+        "pv_sum_first": pv_first, "pv_sum_last": pv_last,
+        "delta_pra": latest_p.get("croissance"), "progression": progression,
+        "observations": len(rows),
     }
+
+
+@app.get("/sites/{site_id}/compare")
+def compare(site_id: int, session: SessionDep,
+            from_id: int = Query(alias="from"), to_id: int = Query(alias="to")) -> dict:
+    """Comparaison avant/apres entre deux observations (meme chantier, grilles alignees).
+    Before/after between two periods — images post-SR + deltas metriques.
+    """
+    if session.get(Site, site_id) is None:
+        raise HTTPException(404, "chantier introuvable / site not found")
+    if from_id == to_id:
+        raise HTTPException(422, "from et to doivent etre deux observations distinctes")
+    a, b = session.get(Observation, from_id), session.get(Observation, to_id)
+    if a is None or b is None or a.site_id != site_id or b.site_id != site_id:
+        raise HTTPException(404, "observation introuvable pour ce chantier")
+    va, vb = _pv_sum(a.payload), _pv_sum(b.payload)
+    progression = round(100.0 * min(vb / max(va, 1e-6), 1.3), 1) if va > 0 else 0.0
+    return {"from": _summary(a), "to": _summary(b), "delta": {
+        "progression": progression,
+        "milestone_from": a.milestone, "milestone_to": b.milestone,
+        "pivot_confirme": b.pivot_confirme}}
 
 
 @app.get("/sites/{site_id}/observations")
@@ -159,10 +186,7 @@ def list_observations(site_id: int, session: SessionDep, limit: int = 60) -> lis
         raise HTTPException(404, "chantier introuvable / site not found")
     rows = session.exec(select(Observation).where(Observation.site_id == site_id)
                         .order_by(Observation.created_at.desc()).limit(min(limit, 100)))  # type: ignore[attr-defined]
-    return [{"id": o.id, "obs_date": o.obs_date, "milestone": o.milestone,
-             "pivot_confirme": o.pivot_confirme, "confidence": o.confidence,
-             "payload": json.loads(o.payload or "{}"), "has_image": o.image_png is not None}
-            for o in rows]
+    return [_summary(o) for o in rows]
 
 
 @app.get("/observations/{obs_id}/image")

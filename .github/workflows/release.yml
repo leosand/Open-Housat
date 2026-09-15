@@ -1,0 +1,34 @@
+name: release-images
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {name: api, dockerfile: apps/api/Dockerfile, context: .}
+          - {name: web, dockerfile: apps/web/Dockerfile, context: .}
+          - {name: worker, dockerfile: pipeline/Dockerfile, context: pipeline}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/housat-${{ matrix.name }}:latest
+            ghcr.io/${{ github.repository_owner }}/housat-${{ matrix.name }}:${{ github.ref_name }}

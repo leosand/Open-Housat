@@ -3,47 +3,29 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const API: string = (import.meta as unknown as { env: Record<string, string | undefined> }).env
   .VITE_API_URL ?? 'http://localhost:8000'
 
-interface Site {
-  id: number
-  name: string
-  backfill_status: string
-  created_at: string
-}
+interface Site { id: number; name: string; backfill_status: string; created_at: string }
 
 interface Progress {
-  backfill_status: string
-  backfill_error: string | null
-  milestone: number | null
-  milestone_label: string | null
-  pivot_confirme: boolean
-  pv0: number
-  pv: number
-  delta_pra: number
-  progression: number
-  observations: number
+  backfill_status: string; backfill_error: string | null
+  milestone: number | null; milestone_label: string | null; pivot_confirme: boolean
+  pv_sum_first: number; pv_sum_last: number; delta_pra: number | null
+  progression: number; observations: number
 }
 
 interface Observation {
-  id: number
-  obs_date: string
-  milestone: number | null
-  pivot_confirme: boolean
-  confidence: number
-  has_image: boolean
-  payload: Record<string, unknown>
+  id: number; obs_date: string; milestone: number | null; milestone_label: string | null
+  pivot_confirme: boolean; confidence: number; image_url: string | null
 }
 
-interface AlertItem {
-  id: number
-  message: string
-  sent_at: string
+interface AlertItem { id: number; message: string; sent_at: string }
+
+interface CompareResult {
+  from: Observation; to: Observation
+  delta: { progression: number; milestone_from: number | null; milestone_to: number | null; pivot_confirme: boolean }
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
+  const r = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json' }, ...init })
   if (!r.ok) {
     let title = `HTTP ${r.status}`
     try { title = (await r.json()).title ?? title } catch { /* ignore */ }
@@ -65,8 +47,7 @@ function SiteForm({ onCreated }: { onCreated: (s: Site) => void }) {
     setBusy(true)
     setError(null)
     try {
-      const site = await api<Site>('/sites', { method: 'POST', body: JSON.stringify(form) })
-      onCreated(site)
+      onCreated(await api<Site>('/sites', { method: 'POST', body: JSON.stringify(form) }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'erreur inconnue')
     } finally {
@@ -96,6 +77,78 @@ function SiteForm({ onCreated }: { onCreated: (s: Site) => void }) {
   )
 }
 
+function CompareSlider({ a, b }: { a: Observation; b: Observation }) {
+  const [pos, setPos] = useState(50)
+  if (!a.image_url || !b.image_url) return <p className="hint">Images indisponibles pour ces dates.</p>
+  return (
+    <div className="comparebox" role="group" aria-label="Comparaison avant apres">
+      <img className="cmp imgA" src={`${API}${a.image_url}`} alt={`Avant — ${a.obs_date}`} />
+      <img className="cmp imgB" src={`${API}${b.image_url}`} alt={`Apres — ${b.obs_date}`}
+           style={{ clipPath: `inset(0 0 0 ${pos}%)` }} />
+      <span className="tag tagA">Avant {a.obs_date}</span>
+      <span className="tag tagB">Apres {b.obs_date}</span>
+      <input type="range" min={0} max={100} value={pos} className="cmprange"
+             aria-label="Curseur de comparaison avant apres"
+             onChange={(e) => setPos(Number(e.target.value))} />
+    </div>
+  )
+}
+
+function ComparePanel({ siteId, obs }: { siteId: number; obs: Observation[] }) {
+  const chrono = [...obs].reverse()  // API renvoie desc
+  const [fromId, setFromId] = useState<number | ''>('')
+  const [toId, setToId] = useState<number | ''>('')
+  const [result, setResult] = useState<CompareResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (chrono.length >= 2) {
+      setFromId((f) => (f === '' ? chrono[0].id : f))
+      setToId((t) => (t === '' ? chrono[chrono.length - 1].id : t))
+    }
+  }, [obs.length])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (fromId === '' || toId === '' || fromId === toId) { setResult(null); return }
+    api<CompareResult>(`/sites/${siteId}/compare?from=${fromId}&to=${toId}`)
+      .then((r) => { setResult(r); setError(null) })
+      .catch((e) => setError(e instanceof Error ? e.message : 'erreur'))
+  }, [siteId, fromId, toId])
+
+  if (chrono.length < 2) {
+    return <p className="hint">La comparaison avant/apres sera disponible apres 2 observations.</p>
+  }
+  return (
+    <section>
+      <h3>Avant / Apres (periodes au choix)</h3>
+      <div className="actions">
+        <label>Avant
+          <select value={fromId} onChange={(e) => setFromId(Number(e.target.value))}>
+            {chrono.map(o => <option key={o.id} value={o.id}>{o.obs_date}</option>)}
+          </select>
+        </label>
+        <label>Apres
+          <select value={toId} onChange={(e) => setToId(Number(e.target.value))}>
+            {chrono.map(o => <option key={o.id} value={o.id}>{o.obs_date}</option>)}
+          </select>
+        </label>
+      </div>
+      {error && <p role="alert" className="error">{error}</p>}
+      {result && (
+        <>
+          <CompareSlider a={result.from} b={result.to} />
+          <dl className="metrics">
+            <dt>Jalon avant</dt><dd>{result.from.milestone_label ?? '—'}</dd>
+            <dt>Jalon apres</dt><dd>{result.to.milestone_label ?? '—'}</dd>
+            <dt>Progression periode</dt><dd>{result.delta.progression} %</dd>
+            <dt>Pivot</dt><dd>{result.delta.pivot_confirme ? 'confirme' : 'non'}</dd>
+          </dl>
+        </>
+      )}
+    </section>
+  )
+}
+
 function Dashboard({ site }: { site: Site }) {
   const [progress, setProgress] = useState<Progress | null>(null)
   const [obs, setObs] = useState<Observation[]>([])
@@ -114,9 +167,7 @@ function Dashboard({ site }: { site: Site }) {
     setAlerts(a)
   }, [site.id])
 
-  useEffect(() => {
-    refresh().catch(() => undefined)
-  }, [refresh])
+  useEffect(() => { refresh().catch(() => undefined) }, [refresh])
 
   useEffect(() => {
     if (progress?.backfill_status === 'running') {
@@ -159,10 +210,11 @@ function Dashboard({ site }: { site: Site }) {
         <dl className="metrics">
           <dt>Jalon</dt><dd>{progress.milestone_label ?? '—'} {progress.pivot_confirme ? '(pivot confirme)' : ''}</dd>
           <dt>Progression</dt><dd>{progress.progression} %</dd>
-          <dt>Emprise PV</dt><dd>{progress.pv.toFixed(4)}</dd>
+          <dt>PV cumulee</dt><dd>{progress.pv_sum_last.toFixed(2)}</dd>
           <dt>Observations</dt><dd>{progress.observations}</dd>
         </dl>
       )}
+      <ComparePanel siteId={site.id} obs={obs} />
       {alerts.length > 0 && (
         <section>
           <h3>Alertes</h3>
@@ -174,8 +226,8 @@ function Dashboard({ site }: { site: Site }) {
         <div className="obsgrid">
           {obs.map(o => (
             <figure key={o.id}>
-              {o.has_image
-                ? <img src={`${API}/observations/${o.id}/image`} alt={`scene ${o.obs_date}`} loading="lazy" />
+              {o.image_url
+                ? <img src={`${API}${o.image_url}`} alt={`scene ${o.obs_date}`} loading="lazy" />
                 : <div className="noimg">sans image</div>}
               <figcaption>{o.obs_date} — M{o.milestone ?? '?'} (conf. {o.confidence})</figcaption>
             </figure>
@@ -190,14 +242,12 @@ export default function App() {
   const [sites, setSites] = useState<Site[]>([])
   const [selected, setSelected] = useState<Site | null>(null)
 
-  useEffect(() => {
-    api<Site[]>('/sites').then(setSites).catch(() => undefined)
-  }, [])
+  useEffect(() => { api<Site[]>('/sites').then(setSites).catch(() => undefined) }, [])
 
   return (
     <main>
       <h1>Housat — MVP local</h1>
-      <p className="hint">Verification satellite de chantiers (Sentinel-2, backfill archive, jalons M0-M4).</p>
+      <p className="hint">Verification satellite de chantiers : backfill archive, jalons M0-M4, avant/apres.</p>
       {!selected ? (
         <>
           <SiteForm onCreated={(s) => { setSites([s, ...sites]); setSelected(s) }} />

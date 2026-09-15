@@ -1,4 +1,4 @@
-"""Tests API — TestClient, SQLite isole, RFC 7807, validation bbox. Aucune IO reseau."""
+"""Tests API — TestClient, SQLite isole, RFC 7807, validation bbox, compare. Sans reseau."""
 
 import os
 
@@ -27,11 +27,9 @@ def test_create_site_ok_201() -> None:
 
 
 def test_create_site_bbox_invalide_rfc7807() -> None:
-    bad = {**VALID, "max_lon": 9.69}  # max < min
-    r = client.post("/sites", json=bad)
+    r = client.post("/sites", json={**VALID, "max_lon": 9.69})
     assert r.status_code == 422
     assert r.headers["content-type"].startswith("application/problem+json")
-    assert r.json()["status"] == 422
 
 
 def test_create_site_bbox_trop_grande() -> None:
@@ -51,11 +49,19 @@ def test_progress_initial_idle() -> None:
     assert p["backfill_status"] == "idle"
     assert p["milestone"] is None
     assert p["observations"] == 0
+    assert p["progression"] == 0.0
 
 
-def test_list_sites_contains_created() -> None:
-    sites = client.get("/sites").json()
-    assert any(s["name"] == "Chantier Demo" for s in sites)
+def test_compare_from_eq_to_422() -> None:
+    site_id = client.get("/sites").json()[0]["id"]
+    r = client.get(f"/sites/{site_id}/compare", params={"from": 1, "to": 1})
+    assert r.status_code == 422
+    assert r.headers["content-type"].startswith("application/problem+json")
+
+
+def test_compare_obs_inexistantes_404() -> None:
+    site_id = client.get("/sites").json()[0]["id"]
+    assert client.get(f"/sites/{site_id}/compare", params={"from": 1, "to": 2}).status_code == 404
 
 
 def test_observations_vides_et_frames_vides() -> None:

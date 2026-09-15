@@ -21,7 +21,16 @@ def test_frame_roundtrip() -> None:
     loaded = obs.load_frame(obs.dump_frame(bands))
     assert set(loaded) == set(bands)
     assert loaded["nir"].dtype == np.float32
-    assert np.max(np.abs(loaded["nir"] - bands["nir"])) < 1e-3  # float16 tolerance
+    assert np.max(np.abs(loaded["nir"] - bands["nir"])) < 1e-3
+
+
+def test_match_shape_aligns_grids() -> None:
+    # fenetres de clip decalees (bug latent corrige) : formes differentes -> alignees sur l'ancre
+    bands = {k: np.full((64, 64), 0.3, dtype=np.float32) for k in ("red", "nir")}
+    bands["red"] = np.full((63, 65), 0.3, dtype=np.float32)  # derive de fenetre sub-pixel
+    out = obs.match_shape(bands, (64, 64))
+    assert all(v.shape == (64, 64) for v in out.values())
+    assert abs(float(out["red"].mean()) - 0.3) < 1e-3
 
 
 def test_pv_truncation_ring() -> None:
@@ -31,12 +40,11 @@ def test_pv_truncation_ring() -> None:
 
 
 def test_progress_gt_100_with_positive_pivot() -> None:
-    div0 = _field(0.0, 0.30)          # t0 : petite zone changee fortement
-    div_t = _field(0.0, 0.10)         # t : meme ordre, totaux comparables
-    div_t[40:56, 40:56] = 0.35        # nouveau pivot positif fort (somme den > num, masque plus grand)
+    div0 = _field(0.0, 0.30)
+    div_t = _field(0.0, 0.10)
+    div_t[40:56, 40:56] = 0.35
     p = obs.compute_div_progress(div0, div_t)
     assert 0.0 <= p <= 130.0
-    # pivot negatif : la zone de t0 revient a zero -> denominator gonfle, ratio bas
     div_neg = _field(0.0, -0.30)
     div_neg[40:56, 40:56] = 0.10
     p_neg = obs.compute_div_progress(div0, div_neg)
@@ -45,7 +53,7 @@ def test_progress_gt_100_with_positive_pivot() -> None:
 
 def test_detect_pivot_qualifie() -> None:
     pv_t = _field(0.0, 1.0)
-    div = _field(-0.001, 0.20)   # forte croissance localisee, queue negative negligeable
+    div = _field(-0.001, 0.20)
     r = obs.detect_pivot_pv(div, pv_t)
     assert r["dpra"] > 0.15
     assert r["qualifie"] is True
@@ -53,7 +61,7 @@ def test_detect_pivot_qualifie() -> None:
 
 def test_milestone_pivot_confirme_m2() -> None:
     anchor = [_field(0.30) for _ in range(3)]
-    curr = [_field(0.30, 0.55) for _ in range(3)]  # hausse localisee sur les 3 indices
+    curr = [_field(0.30, 0.55) for _ in range(3)]
     pvs, divs = [], []
     for a, c in zip(anchor, curr):
         pv, div = obs.pv_div(a, c)

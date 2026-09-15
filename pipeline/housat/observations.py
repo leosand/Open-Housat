@@ -1,10 +1,10 @@
 """Observations : serialisation des frames + indicateurs V&V phenomenologiques.
 
-Frames : npz compresse float16 (stocke BYTEA) — scène d'ancrage t0 + derniere scène.
+Frames : npz compresse float16 (stocke BYTEA) — scene d'ancrage t0 + derniere scene.
 Indicateurs (spec MVP-l1) :
   PV  = partie positive du delta d'indice vs t0, tronquee sur l'anneau externe (ring)
   emprise robuste m = { PV > q80(PV>0) }
-  progression = 100 * sum(divPV0[m0]) / sum(divPV_t[m_t])  (<100 pivot neg, >>100 croissance+pivot pos)
+  progression entre periodes = 100 * pv_sum(t2) / pv_sum(t1), cap 130 %
   pivot qualifie : dPRA > 0.15 ET |moyenne negative| << PRA
 """
 
@@ -26,6 +26,23 @@ def dump_frame(bands: dict[str, np.ndarray]) -> bytes:
 def load_frame(data: bytes) -> dict[str, np.ndarray]:
     with np.load(io.BytesIO(data)) as z:
         return {k: z[k].astype(np.float32) for k in z.files}
+
+
+def match_shape(bands: dict[str, np.ndarray], ref_shape: tuple[int, int]) -> dict[str, np.ndarray]:
+    """Aligne les bandes sur la geometrie de l'ancre (bilineaire).
+    Corrige le desalignement de grille latent : fenetres de clip decalees d'un pixel
+    selon les dates => comparaisons indice-a-indice faussees (bug V&V, cf. verification.md).
+    Co-registration geodesique fine = phase 2."""
+    from skimage.transform import resize
+
+    out: dict[str, np.ndarray] = {}
+    for k, v in bands.items():
+        if v.shape != ref_shape:
+            out[k] = resize(v, ref_shape, order=1, preserve_range=True,
+                            anti_aliasing=False).astype(np.float32)
+        else:
+            out[k] = v
+    return out
 
 
 def truncate_ring(a: np.ndarray, ring: int = 1) -> np.ndarray:
@@ -58,7 +75,8 @@ def robust_frac_joint(pvs: list[np.ndarray], q: float = 0.8) -> float:
     return float(np.logical_or.reduce(masks).mean())
 
 
-def _masked_sum(d: np.ndarray, q: float = 0.8) -> float:
+def masked_sum(d: np.ndarray, q: float = 0.8) -> float:
+    """Somme sur le masque robuste { d > q80(d>0) }."""
     pos = d[d > EPS]
     if pos.size == 0:
         return 0.0
@@ -68,7 +86,7 @@ def _masked_sum(d: np.ndarray, q: float = 0.8) -> float:
 
 def compute_div_progress(div0: np.ndarray, div_t: np.ndarray, cap: float = 1.3) -> float:
     """%age divPV0/divPV_t (cap 130). < 100 => pivot negatif ; >> 100 => croissance + pivot positif."""
-    s0, st = _masked_sum(div0), _masked_sum(div_t)
+    s0, st = masked_sum(div0), masked_sum(div_t)
     if st <= EPS:
         return 0.0
     return 100.0 * min(s0 / st, cap)
@@ -88,11 +106,7 @@ def milestone_decision(
     pvs_t: list[np.ndarray],
     divs: list[np.ndarray],
 ) -> tuple[int, bool, float]:
-    """Decision de jalon avec V&V pivot.
-    Retourne (milestone M0..M4, pivot_confirme, croissance_emprise).
-    M2 : pivot qualifie + emprise en croissance ; M3 : pivot stabilise ;
-    M1 : croissance sans pivot ; M4 : PV elevee et activite nulle ; sinon M0.
-    """
+    """Decision de jalon avec V&V pivot — retourne (M0..M4, pivot_confirme, croissance)."""
     growth = robust_frac_joint(pvs_t) - robust_frac_joint(pvs0)
     pivots = [bool(detect_pivot_pv(d, pv)["qualifie"]) for d, pv in zip(divs, pvs_t)]
     any_pivot = any(pivots)

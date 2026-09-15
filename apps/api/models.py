@@ -59,7 +59,6 @@ class FrameStore(SQLModel, table=True):
 
 
 class Report(SQLModel, table=True):
-    """Rapport PDF hebdomadaire persiste — un par (chantier, semaine ISO)."""
     __tablename__ = "reports"
     __table_args__ = (UniqueConstraint("site_id", "week_start", name="uq_report_site_week"),)
 

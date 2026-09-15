@@ -16,7 +16,6 @@ def _field(value: float, patch_value: float | None = None) -> np.ndarray:
 
 
 def test_band_order_physique_sentinel2() -> None:
-    """L'ordre alphabetique inverserait nir et red — tenseur SEN2SR incoherent."""
     assert BAND_ORDER == ("blue", "green", "red", "nir", "swir16")
     assert list(BAND_ORDER) != sorted(BAND_ORDER)
 
@@ -30,7 +29,6 @@ def test_bicubic_preserve_range() -> None:
 
 
 def test_pivot_croissance_pure_sans_queue_negative() -> None:
-    """Construction franche (div >= 0 partout) : queue negative nulle = negligeable."""
     pv_t = _field(0.0, 1.0)
     div = _field(0.0, 0.20)
     r = obs.detect_pivot_pv(div, pv_t)

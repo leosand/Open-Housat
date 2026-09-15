@@ -18,24 +18,27 @@ try:
 except ImportError:
     HAS_SEN2SR = False
 
+# Ordre physique Sentinel-2 (B02, B03, B04, B08, B11) — JAMAIS sorted() alphabetique
+# (sinon nir/red inverses -> SEN2SR recoit un tenseur incoherent).
+BAND_ORDER: tuple[str, ...] = ("blue", "green", "red", "nir", "swir16")
+
 
 def upscale_bands(
     bands: dict[str, np.ndarray], factor: int = 4
 ) -> tuple[dict[str, np.ndarray], str]:
-    """Superresout chaque bande. Retourne (bandes SR, methode utilisee).
-    Upscale every band; returns (sr_bands, method) pour tracabilite dans l'observation.
-    """
+    """Superresout chaque bande. Retourne (bandes SR, methode utilisee)."""
     if HAS_SEN2SR:
-        stacked = np.stack([bands[k] for k in sorted(bands)], axis=-1).astype(np.float32)
-        sr = sen2sr.predict_large(stacked)  # API ESA OpenSR (poids telecharges au 1er appel)
-        out = {k: sr[..., i] for i, k in enumerate(sorted(bands))}
-        return out, "sen2sr"
+        keys = [k for k in BAND_ORDER if k in bands]
+        stacked = np.stack([bands[k] for k in keys], axis=-1).astype(np.float32)
+        sr = sen2sr.predict_large(stacked)
+        return {k: sr[..., i] for i, k in enumerate(keys)}, "sen2sr"
 
     logger.warning("SEN2SR indisponible — fallback bicubique, confiance reduite")
     from skimage.transform import resize
 
     out = {
-        k: resize(v, (v.shape[0] * factor, v.shape[1] * factor), order=3, anti_aliasing=True).astype(np.float32)
+        k: resize(v, (v.shape[0] * factor, v.shape[1] * factor), order=3,
+                  anti_aliasing=True, preserve_range=True).astype(np.float32)
         for k, v in bands.items()
     }
     return out, "bicubic_fallback"

@@ -16,7 +16,7 @@ jobs:
         include:
           - {name: api, dockerfile: apps/api/Dockerfile, context: .}
           - {name: web, dockerfile: apps/web/Dockerfile, context: .}
-          - {name: worker, dockerfile: pipeline/Dockerfile, context: pipeline}
+          - {name: worker, dockerfile: Dockerfile, context: pipeline}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3

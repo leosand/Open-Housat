@@ -6,10 +6,9 @@ EPSG:4326 -> CRS du raster (corrige le bug latent de v0.1).
 
 from __future__ import annotations
 
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import rasterio
@@ -55,18 +54,26 @@ class StacContext:
         window_days: int | None = None,
         limit: int = 10,
         end: date | None = None,
+        mode: str = "archive",
     ) -> list[SceneMeta]:
-        """Les `limit` scenes les moins nuageuses dans la fenetre, ordre chronologique."""
+        """Recherche STAC.
+
+        mode='archive' : les `limit` scenes les moins nuageuses, rendues en ordre chrono (backfill).
+        mode='latest'  : la scene la plus recente sous le seuil de nuages (verification ponctuelle).
+        """
         max_cloud = settings.max_cloud_cover if max_cloud is None else max_cloud
-        window_days = settings.search_window_days * 6 if window_days is None else window_days
+        if window_days is None:
+            window_days = settings.search_window_days * 6 if mode == "archive" else settings.search_window_days
         end = end or datetime.now(timezone.utc).date()
         start = end - timedelta(days=window_days)
+        sortby = ([{"field": "properties.datetime", "direction": "desc"}] if mode == "latest"
+                  else [{"field": "properties.eo:cloud_cover", "direction": "asc"}])
         search = self.catalog.search(
             collections=[COLLECTION],
             intersects=polygon,
             datetime=f"{start.isoformat()}/{end.isoformat()}",
             query={"eo:cloud_cover": {"lt": max_cloud}},
-            sortby=[{"field": "properties.eo:cloud_cover", "direction": "asc"}],
+            sortby=sortby,
             limit=limit,
         )
         scenes = [
@@ -77,7 +84,9 @@ class StacContext:
             )
             for it in search.items()
         ]
-        return sorted(scenes, key=lambda s: s.acquired)  # t0 = plus ancienne
+        if mode == "latest":
+            return sorted(scenes, key=lambda s: s.acquired, reverse=True)
+        return sorted(scenes, key=lambda s: s.acquired)
 
 
 def _reproject_polygon(polygon: dict[str, Any], dst_crs: Any) -> dict[str, Any]:

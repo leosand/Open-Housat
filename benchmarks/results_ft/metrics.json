@@ -1,0 +1,103 @@
+{
+  "bbox": [
+    9.7,
+    4.04,
+    9.71,
+    4.05
+  ],
+  "hr_size": 512,
+  "lr_size": 128,
+  "factor": 4,
+  "runs": [
+    {
+      "name": "nearest",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.0009415000022272579,
+      "psnr": 17.845,
+      "ssim": 0.5129,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.572805599993444,
+      "psnr": 18.704,
+      "ssim": 0.5586,
+      "note": ""
+    },
+    {
+      "name": "housat_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 2.7705927999995765,
+      "psnr": 19.02,
+      "ssim": 0.6132,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 9.736343600001419,
+      "psnr": 18.648,
+      "ssim": 0.6526,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 7.019403500002227,
+      "psnr": 17.382,
+      "ssim": 0.5409,
+      "note": ""
+    },
+    {
+      "name": "nearest",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.0010304000024916604,
+      "psnr": 17.845,
+      "ssim": 0.5129,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.4016042000002926,
+      "psnr": 18.704,
+      "ssim": 0.5586,
+      "note": ""
+    },
+    {
+      "name": "housat_sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.4314587000044412,
+      "psnr": 19.02,
+      "ssim": 0.6132,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 1.3793831000002683,
+      "psnr": 18.648,
+      "ssim": 0.6526,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 6.858093599999847,
+      "psnr": 17.382,
+      "ssim": 0.5409,
+      "note": ""
+    }
+  ]
+}

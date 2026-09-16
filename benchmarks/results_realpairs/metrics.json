@@ -1,0 +1,51 @@
+{
+  "train": {
+    "device": "cuda",
+    "steps": 3000,
+    "final_l1": 0.004693020889535546,
+    "seconds": 148.73156110000127,
+    "ckpt": "benchmarks\\models\\housat_sr_realpairs.pt"
+  },
+  "eval": {
+    "naip_test": [
+      {
+        "method": "bicubic",
+        "psnr": 39.383,
+        "ssim": 0.9431,
+        "note": ""
+      },
+      {
+        "method": "swin2sr",
+        "psnr": 40.052,
+        "ssim": 0.9507,
+        "note": ""
+      },
+      {
+        "method": "housat_sr",
+        "psnr": 40.437,
+        "ssim": 0.9508,
+        "note": ""
+      }
+    ],
+    "spot_cross_sensor": [
+      {
+        "method": "bicubic",
+        "psnr": 35.214,
+        "ssim": 0.8586,
+        "note": ""
+      },
+      {
+        "method": "swin2sr",
+        "psnr": 35.236,
+        "ssim": 0.8706,
+        "note": ""
+      },
+      {
+        "method": "housat_sr",
+        "psnr": 33.23,
+        "ssim": 0.8579,
+        "note": ""
+      }
+    ]
+  }
+}

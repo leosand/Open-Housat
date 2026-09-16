@@ -19,6 +19,9 @@ services:
     environment:
       HOUSAT_DATABASE_URL: postgresql+psycopg2://housat:housat@db:5432/housat
       DATABASE_URL: postgresql+psycopg2://housat:housat@db:5432/housat
+      # Surresolution d'affichage servie en ONNX (modele livre dans l'image api).
+      SR_MODEL_PATH: /srv/pipeline/housat/models/housat_sr_x4.onnx
+      DISPLAY_SR_ENGINE: onnx
     depends_on:
       db: {condition: service_healthy}
     ports: ["8000:8000"]
@@ -30,6 +33,8 @@ services:
       dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg2://housat:housat@db:5432/housat
+      SR_MODEL_PATH: /srv/housat/models/housat_sr_x4.onnx
+      DISPLAY_SR_ENGINE: onnx
     depends_on:
       db: {condition: service_healthy}
     profiles: ["manual"]  # usage : docker compose -f infra/docker-compose.yml run --rm worker

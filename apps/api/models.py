@@ -13,8 +13,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+from pydantic import field_serializer
 from sqlalchemy import Column, LargeBinary, UniqueConstraint, orm
 from sqlmodel import Field, SQLModel
+
+
+def _iso_utc(v: datetime | None) -> str | None:
+    """ISO 8601 AVEC fuseau : les datetimes sont stockes en UTC mais naifs (SQLite) -> on
+    retablit l'offset, sinon le client affiche l'heure UTC comme si c'etait du local."""
+    if v is None:
+        return None
+    return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).isoformat()
 
 
 class Site(SQLModel, table=True):
@@ -29,6 +38,10 @@ class Site(SQLModel, table=True):
     backfill_status: str = Field(default="idle")
     backfill_error: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime) -> str | None:
+        return _iso_utc(v)
 
 
 class Observation(SQLModel, table=True):
@@ -46,6 +59,10 @@ class Observation(SQLModel, table=True):
                                        sa_column=orm.deferred(Column(LargeBinary)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime) -> str | None:
+        return _iso_utc(v)
+
 
 class Alert(SQLModel, table=True):
     __tablename__ = "alerts"
@@ -56,6 +73,10 @@ class Alert(SQLModel, table=True):
     message: str
     milestone: Optional[int] = Field(default=None)
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("sent_at")
+    def _ser_sent_at(self, v: datetime) -> str | None:
+        return _iso_utc(v)
 
 
 class FrameStore(SQLModel, table=True):
@@ -80,3 +101,7 @@ class Report(SQLModel, table=True):
     observations_count: int = Field(default=0)
     pdf: bytes = Field(sa_column=orm.deferred(Column(LargeBinary)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime) -> str | None:
+        return _iso_utc(v)

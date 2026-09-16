@@ -1,0 +1,22 @@
+# Surresolution OPTIONNELLE — hors image slim par defaut (philosophie zero-dollar, ADR 0001).
+# Optional super-resolution — intentionally excluded from the default slim image.
+#
+# Le pipeline fonctionne SANS ces paquets : la voie detection retombe alors en bicubique
+# honnete (`bicubic_fallback`) et la voie affichage reste en passage direct. Installer ici
+# pour activer une VRAIE surresolution neuronale (GPU local — RTX 4070 Ti SUPER 16 Go — ou
+# CPU, plus lent). / The pipeline works WITHOUT these: detection falls back to honest
+# bicubic and the display track stays passthrough. Install to enable real neural SR.
+#
+#   pip install -r pipeline/requirements-sr.txt
+#
+# --- Voie DETECTION : SEN2SR (ESA OpenSR), modele satellite physique ---
+# Tire les bandes 10 m (B02/B03/B04/B08) vers 2,5 m. Active HOUSAT_SR_ENGINE=auto|sen2sr.
+# torch CPU : `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+sen2sr>=0.1
+torch>=2.0
+
+# --- Voie AFFICHAGE : Real-ESRGAN ONNX (perceptuel, GPU fp16) ---
+# Necessite un modele .onnx fourni separement (poids non libres / volumineux, non committe) :
+# renseigner HOUSAT_SR_MODEL_PATH. GPU : `pip install onnxruntime-gpu` (CUDA 12) ; CPU : `onnxruntime`.
+#   Modeles conseilles : RealESRGAN_x4plus, 4x-UltraSharp, realesr-general-x4v3 (fp16).
+onnxruntime-gpu>=1.18

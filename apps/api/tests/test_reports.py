@@ -1,19 +1,16 @@
 """Tests API rapports PDF — TestClient, SQLite isole, aucune IO reseau."""
 
 import json
-import os
 from datetime import date, timedelta
 
-os.environ["HOUSAT_DATABASE_URL"] = "sqlite:///./test-housat.db"
+import numpy as np
+from fastapi.testclient import TestClient
+from sqlmodel import Session
 
-import numpy as np  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from sqlmodel import Session  # noqa: E402
-
-from housat import observations as obsmod  # noqa: E402
-from housat.reporting import last_iso_week, week_bounds  # noqa: E402
-from main import app, engine  # noqa: E402
-from models import Observation  # noqa: E402
+from housat import observations as obsmod
+from housat.reporting import last_iso_week, week_bounds
+from main import app, engine
+from models import Observation
 
 client = TestClient(app)
 

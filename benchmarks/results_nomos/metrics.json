@@ -1,0 +1,22 @@
+{
+  "bbox": [
+    9.7,
+    4.04,
+    9.71,
+    4.05
+  ],
+  "hr_size": 512,
+  "lr_size": 128,
+  "factor": 4,
+  "runs": [
+    {
+      "name": "onnx_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 5.404104799999914,
+      "psnr": 16.333,
+      "ssim": 0.4906,
+      "note": ""
+    }
+  ]
+}

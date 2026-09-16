@@ -62,5 +62,9 @@ def test_render_pdf_sans_images_ni_alertes() -> None:
 
 
 def test_latin1_sanitize() -> None:
-    assert reporting._latin1("été") == "été"
-    assert "?" in reporting._latin1("test — em-dash")
+    assert reporting._latin1("ete") == "ete"
+    assert reporting._latin1("ete — accentue, etc.") == "ete - accentue, etc."
+    assert reporting._latin1("bulle • suite …") == "bulle - suite ..."
+    # Latin-1 accepte les accents ; seuls les caracteres hors Latin-1 deviennent « ? ».
+    assert reporting._latin1("ete \u00e9t\u00e9") == "ete \u00e9t\u00e9"
+    assert "?" in reporting._latin1("emoji \U0001F3E0")

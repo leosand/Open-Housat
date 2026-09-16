@@ -1,12 +1,11 @@
-"""Tests API — TestClient, SQLite isole, RFC 7807, validation bbox, compare. Sans reseau."""
+"""Tests API — TestClient, SQLite isole, RFC 7807, validation bbox, compare. Sans reseau.
 
-import os
+La base de test est preparee par `conftest.py` : fichier NEUF a chaque execution.
+"""
 
-os.environ["HOUSAT_DATABASE_URL"] = "sqlite:///./test-housat.db"
+from fastapi.testclient import TestClient
 
-from fastapi.testclient import TestClient  # noqa: E402
-
-from main import app  # noqa: E402
+from main import app
 
 client = TestClient(app)
 

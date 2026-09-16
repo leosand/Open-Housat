@@ -1,0 +1,103 @@
+{
+  "bbox": [
+    -72.34,
+    18.54,
+    -72.33,
+    18.55
+  ],
+  "hr_size": 512,
+  "lr_size": 128,
+  "factor": 4,
+  "runs": [
+    {
+      "name": "nearest",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.0008399999933317304,
+      "psnr": 16.552,
+      "ssim": 0.5155,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.5617616000017733,
+      "psnr": 17.493,
+      "ssim": 0.5634,
+      "note": ""
+    },
+    {
+      "name": "housat_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 2.5703040000007604,
+      "psnr": 17.889,
+      "ssim": 0.6212,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 9.773486900005082,
+      "psnr": 17.382,
+      "ssim": 0.6601,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 6.759693599997263,
+      "psnr": 15.382,
+      "ssim": 0.4904,
+      "note": ""
+    },
+    {
+      "name": "nearest",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.0010840999966603704,
+      "psnr": 16.552,
+      "ssim": 0.5155,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.4005867000014405,
+      "psnr": 17.493,
+      "ssim": 0.5634,
+      "note": ""
+    },
+    {
+      "name": "housat_sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.44903640000120504,
+      "psnr": 17.889,
+      "ssim": 0.6212,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 1.3554229000001214,
+      "psnr": 17.382,
+      "ssim": 0.6601,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 6.989512199994351,
+      "psnr": 15.382,
+      "ssim": 0.4904,
+      "note": ""
+    }
+  ]
+}

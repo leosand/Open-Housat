@@ -52,15 +52,50 @@ jobs:
       - run: npm run test:e2e
         working-directory: apps/web
 
+  # Job PLANIFIE (cron 06:00) : verifie que le worker demarre, se connecte a sa base et sort
+  # proprement. Il dependait d'un secret `DATABASE_URL` qui N'EXISTE PAS -> URL vide ->
+  # « sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL from given URL string » :
+  # le job etait ROUGE tous les jours (constate le 2026-09-16). On fournit desormais une base de
+  # service (PostGIS, comme la production) : aucun secret requis, et le chemin PostgreSQL est
+  # reellement exerce (le reste du CI ne teste que SQLite).
+  #
+  # AUCUN mot de passe dans ce fichier, volontairement : `POSTGRES_HOST_AUTH_METHOD: trust` sur un
+  # conteneur ephemere lie a localhost. Un mot de passe en clair serait signale par le scan de
+  # secrets (GitGuardian) et donnerait un faux positif a chaque modification — ne pas en rajouter.
   worker-run:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: housat
+          POSTGRES_DB: housat
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U housat" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg2://housat@localhost:5432/housat
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
       - run: pip install -r pipeline/requirements.txt
-      - run: python -m housat.worker --once
+      - name: Schema PostgreSQL (table reports) — le chemin non couvert par SQLite
+        run: |
+          python -c "
+          from sqlalchemy import create_engine, text
+          import os
+          from housat.reporting import ensure_report_table
+          e = create_engine(os.environ['DATABASE_URL'])
+          ensure_report_table(e)
+          with e.begin() as c:
+              c.execute(text('SELECT count(*) FROM reports'))
+          print('table reports OK sur PostgreSQL')
+          "
         working-directory: pipeline
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Worker --once (base vide, demarrage + connexion + sortie propre)
+        run: python -m housat.worker --once
+        working-directory: pipeline

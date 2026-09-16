@@ -5,6 +5,23 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) · Versionnage
 Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
 
 ## [v0.1.0] - 2026-09-16
+- **Socle dataset bâti (objectifs « contours » et « dalle/toit »)** : `pipeline/housat/built_dataset.py`
+  rasterise les empreintes **OSM (ODbL)** sur la grille du LR Sentinel-2 (`all_touched=False`, règle
+  conservatrice alignée sur `footprint_stats`) et fournit un tuilage à **couverture totale** (dernière
+  fenêtre alignée sur le bord — le premier jet laissait 14 px dehors, attrapé par le test).
+  **Preuve d'alignement vecteur/raster** : 49,8 % de surface bâtie OSM ↔ **50,4 %** de pixels bâtis
+  dans le masque rasterisé, sur une scène réelle (2024-12-01, 8 % de nuages, îlot Housat, grille 19×19).
+  Tests : `pipeline/tests/test_built_dataset.py` (4) — total **104 tests** verts.
+- **OSM à Douala : correction d'une erreur de mesure** — un premier relevé annonçait **0 bâtiment** sur
+  l'îlot de 178 m : c'était une **réponse vide d'Overpass saturé** (`200` + zéro élément) acceptée comme
+  un fait. Mesure refaite avec réessais : **65 polygones** sur l'îlot (49,8 % bâti), **136 070** sur
+  10 km, **286 542** sur la métropole. `fetch_buildings` **réessaie sur le miroir** quand la réponse est
+  vide ; la règle est écrite dans `docs/limites-et-honnetete.md`, l'ADR 0011, la note de connaissance
+  Overpass et la fiche projet.
+- **Disponibilité des scènes sèches mesurée (nuage tuile, Douala 10 km)** : 23 scènes en 2017-2018
+  (**6** sous 15 %), 25 en 2022-2023 (**3**), 17 en 2024-2025 (**1**), et **0 sous 30 %** pour la
+  saison 2025-2026 → la saison la plus récente doit être **qualifiée par parcelle (SCL, ADR 0010)**
+  avant tout choix de dates, la statistique tuile n'étant pas décisionnaire.
 - **L'etape affiche sa PREUVE (passe 7, 13:2x)** — reponse a « sur quoi tu te bases pour dire terrain nu,
   structure ? » : l'IHM ne l'affirme plus sans le montrer.
   - La fiche nomme la **date qui a etabli l'etape** (« mesuree le 2026-04-27 ») au lieu de laisser
@@ -87,7 +104,10 @@ Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
     en 1,4 s **puis** 504 en 8,5 s, POST comme GET) et **remonte l'echec** ; `/parcel/buildings`
     expose `stats` (nombre, part batie **coupee a l'emprise** via shapely, emprise moyenne) et
     `unavailable`. Mesure live : parcelle de 22 m = **1 batiment, 61 % bati** ; ilot de 178 m =
-    **0 batiment** (ce bloc de Douala n'est pas cartographie dans OSM) — d'ou le choix de **ne pas**
+    **65 polygones** (mesure CORRIGEE le 2026-09-16 apres reessai : la reponse vide d'Overpass
+    sature avait ete prise pour un fait) — OSM couvre bien Douala : 136 070 polygones sur 10 km,
+    286 542 sur la metropole ; le verdict IHM ne s'appuie toujours **pas** sur OSM, mais la
+    supervision bati, elle, est possible.
     fonder le verdict de l'IHM sur OSM.
 - **Revue IHM par captures réelles (passe 2, 2026-09-16 11:2x)** : parcours complet capturé à
   1280×800 sur deux chantiers (avec et sans données), défauts corrigés :

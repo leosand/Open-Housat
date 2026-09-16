@@ -42,7 +42,10 @@ apparu.
   physique (aucune analyse par bâtiment possible à 10 m, cf. ADR 0012).
 - Retrait assumé de composants trompeurs : le **comparateur de mesure** (carte MapLibre + curseurs
   d'opacité, dont l'image de mesure est illisible et les curseurs sans effet visible) et le **calque
-  OSM** (0 bâtiment cartographié à Douala, service intermittent) → fiche passée de 2 595 à 1 759 px.
+  OSM** (service intermittent — et une réponse VIDE d'Overpass saturé avait été prise pour un fait ;
+  mesure corrigée le 2026-09-16 : 65 polygones sur l'îlot de 178 m, 286 542 sur la métropole) →
+  fiche passée de 2 595 à 1 759 px. Le calque reste hors IHM (poids visuel), mais OSM reste
+  exploitable côté serveur comme **vérité terrain bâti**.
   `apps/web/src/MapView.tsx` supprimé ; `GET /sites/{id}/compare` **conservé** côté API (surface
   publique testée).
 

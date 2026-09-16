@@ -29,16 +29,18 @@ OVERPASS_URLS = (
 ATTRIBUTION = "Emprises : © OpenStreetMap contributors (ODbL)"
 
 
-def _overpass_query(query: str) -> bytes:
-    """Interroge Overpass, endpoints essays dans l'ordre.
+def _overpass_query(query: str, *, rotate: int = 0) -> bytes:
+    """Interroge Overpass, endpoints essays dans l'ordre (permutation possible via `rotate`).
 
     Overpass est **intermittent** : mesures du 2026-09-16 sur le meme endpoint et la meme requete —
-    GET 200 en 1,4 s (65 batiments) puis POST 504 en 8,5 s, puis l'inverse. L'API transformait cet
-    echec en collection vide, donc la superposition OSM etait **silencieusement vide** (la case
-    « Emprises » semblait morte) : ici l'echec **remonte** pour etre dit a l'utilisateur.
+    GET 200 en 1,4 s (65 batiments) puis POST 504 en 8,5 s, puis l'inverse, et un quartier de 1 km
+    qui repond 200 avec **zero element** avant de renvoyer du HTML. L'API transformait cet echec en
+    collection vide, donc la superposition OSM etait **silencieusement vide** (la case « Emprises »
+    semblait morte) : ici l'echec **remonte** pour etre dit a l'utilisateur.
     """
     last: Exception | None = None
-    for url in OVERPASS_URLS:
+    urls = OVERPASS_URLS[rotate:] + OVERPASS_URLS[:rotate]
+    for url in urls:
         try:
             with httpx.Client(timeout=30.0, headers={"User-Agent": USER_AGENT},
                               follow_redirects=True) as c:
@@ -51,18 +53,35 @@ def _overpass_query(query: str) -> bytes:
 
 
 def fetch_buildings(bbox: BBox, *, fetcher: Fetcher | None = None) -> list[list[tuple[float, float]]]:
-    """Emprises (polygones lon/lat) des batiments tagges `building` dans l'emprise (OSM Overpass)."""
+    """Emprises (polygones lon/lat) des batiments tagges `building` dans l'emprise (OSM Overpass).
+
+    Une reponse **vide** est reessayee (miroir suivant) : Overpass sature renvoie `200` avec zero
+    element, ce qui est indistinguishable d'une zone sans bati. Mesure du 2026-09-16 : le carre de
+    178 m de Douala a renvoye 0 polygone alors qu'il en contient **65** (49,8 % de surface batie),
+    et un quartier de 1 km a renvoye 0 deux fois de suite avant d'echouer sur du HTML — une
+    conclusion « aucun batiment » tiree de la premiere reponse etait FAUSSE.
+    """
     minlon, minlat, maxlon, maxlat = validate_bbox(bbox)
     query = (f'[out:json][timeout:25];way["building"]({minlat},{minlon},{maxlat},{maxlon});'
              "out geom;")
-    raw = (fetcher or _overpass_query)(query)
-    data = json.loads(raw)
+    if fetcher is not None:  # fetcher injecte (tests hors ligne) : une seule tentative
+        return _polys_from(json.loads(fetcher(query)))
     polys: list[list[tuple[float, float]]] = []
+    for essai in range(2):   # 1re tentative, puis miroir si la reponse est vide
+        polys = _polys_from(json.loads(_overpass_query(query, rotate=essai)))
+        if polys:
+            break
+    return polys
+
+
+def _polys_from(data: dict) -> list[list[tuple[float, float]]]:
+    """Elements Overpass -> anneaux lon/lat (les ways de moins de 3 sommets sont ignores)."""
+    out: list[list[tuple[float, float]]] = []
     for el in data.get("elements", []):
         geom = el.get("geometry") or []
         if len(geom) >= 3:
-            polys.append([(float(g["lon"]), float(g["lat"])) for g in geom])
-    return polys
+            out.append([(float(g["lon"]), float(g["lat"])) for g in geom])
+    return out
 
 
 def footprint_stats(polys: list[list[tuple[float, float]]], bbox: BBox) -> dict[str, float]:

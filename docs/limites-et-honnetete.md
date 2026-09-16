@@ -73,9 +73,12 @@ Règle de lecture des jalons (`milestone_decision`) :
    vers Esri.
 3. **Overpass (OSM) est intermittent** : mesuré 200 en 1,4 s, puis 504 en 8,5 s, POST comme GET. Le
    code essaie deux endpoints et **remonte l'échec** (`unavailable`) au lieu d'un faux « 0 bâtiment ».
-4. **Couverture OSM inégale** : le carré de démonstration de Douala contient **0 bâtiment** cartographié,
-   un carré voisin de 1,4 km en contient **1 719**. Conclusion assumée : **aucun verdict produit ne
-   repose sur OSM**.
+4. **OSM : mesurer, jamais conclure sur une réponse vide.** Un carré de 178 m de Douala a d'abord
+   été annoncé à **0 bâtiment** — c'était une **réponse vide d'Overpass saturé**, pas un fait.
+   Mesure corrigée (2026-09-16, réessais) : **65 polygones** sur ce carré (49,8 % de surface bâtie),
+   **136 070** sur 10 km, **286 542** sur la métropole. Règle : `fetch_buildings` **réessaie sur le
+   miroir** quand la réponse est vide, car un service saturé renvoie `200` avec zéro élément —
+   indiscernable d'une zone sans bâti.
 5. **Licences** : les tuiles Esri ne sont **pas** redistribuables — elles servent l'affichage et la
    lecture en ligne ; les rapports livrés utilisent ReportLab + les images Sentinel-2 (Copernicus) et
    OSM (ODbL) selon attribution. Toute embarquement d'imagerie Esri dans un livrable client est **à

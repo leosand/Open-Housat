@@ -25,6 +25,12 @@ from housat.config import settings
 
 COLLECTION = "sentinel-2-l2a"
 BANDS: tuple[str, ...] = ("red", "green", "blue", "nir", "swir16")
+# Couche de classification de scene (20 m, CATEGORIELLE) : sert au masque nuage PAR PARCELLE.
+SCL_ASSET = "scl"
+# Cote minimal (m) du voisinage lu dans SCL pour juger les nuages : sous ce cote, une emprise de
+# maison ne couvre meme pas un pixel de 20 m et le test nuage devient un tirage au sort
+# (cf. `_scl_window`). La MESURE, elle, reste sur l'emprise exacte.
+SCL_MIN_SPAN_M = 60.0
 
 
 @dataclass
@@ -64,7 +70,7 @@ class StacContext:
         mode='archive' : les `limit` scenes les moins nuageuses, rendues en ordre chrono (backfill).
         mode='latest'  : la scene la plus recente sous le seuil de nuages (verification ponctuelle).
         """
-        max_cloud = settings.max_cloud_cover if max_cloud is None else max_cloud
+        max_cloud = settings.tile_cloud_prefilter if max_cloud is None else max_cloud
         if window_days is None:
             window_days = settings.search_window_days * 6 if mode == "archive" else settings.search_window_days
         end = end or datetime.now(timezone.utc).date()
@@ -114,3 +120,45 @@ def fetch_bands(ctx: StacContext, polygon: dict[str, Any], scene: SceneMeta) -> 
             if arr.shape != ref.shape:
                 out[band] = obs.match_shape({band: arr}, ref.shape)[band]
     return out
+
+
+def _scl_window(geom: Any, span_m: float) -> Any:
+    """Etend l'emprise analysee a `span_m` de cote MINIMUM, centree dessus.
+
+    SCL est a **20 m** : pour une emprise de maison (10-20 m), `rio_mask` couvre au mieux UN pixel
+    (et souvent zero centre de pixel) — le remplissage `nodata=0` etait alors compte comme
+    « obscurci » et **toutes** les scenes etaient rejetees a 100 % de nuages (mesure du 2026-09-16 sur
+    un chantier de 16 x 8 m : 20 scenes refusees d'affilee, aucune observation). On juge donc les
+    nuages sur un **voisinage** d'au moins 60 m, tout en mesurant le changement sur l'emprise exacte.
+    """
+    from shapely.geometry import box
+
+    minx, miny, maxx, maxy = geom.bounds
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    half = max(span_m / 2, (maxx - minx) / 2, (maxy - miny) / 2)
+    return box(cx - half, cy - half, cx + half, cy + half)
+
+
+def fetch_scl(ctx: StacContext, polygon: dict[str, Any], scene: SceneMeta) -> np.ndarray | None:
+    """Classes SCL (20 m) des pixels REELLEMENT couverts par l'emprise (valeurs valides, 1-D).
+
+    Deux pieges corriges ici (mesure du 2026-09-16) :
+    - `rio_mask(filled=False)` : les pixels **hors** emprise ne sont plus comptes. Avec
+      `filled=True, nodata=0`, le remplissage etait compte comme « obscurci » et gonflait le taux
+      (43,8 % la ou la part reelle est plus faible) ;
+    - `_scl_window` : a 20 m par pixel, une emprise de maison ne couvre aucun centre de pixel — on
+      lit un voisinage de 60 m au minimum, sans quoi le test nuage est un tirage au sort.
+
+    Reechantillonnage **PLUS PROCHE VOISIN** obligatoire : une couche CATEGORIELLE ne s'interpole pas
+    (melanger 8 « nuage » et 4 « vegetation » produirait une classe inexistante).
+    Renvoie `None` si l'asset est absent — l'appelant applique alors son repli documente.
+    """
+    item = ctx.item(scene.item_id)
+    asset = item.assets.get(SCL_ASSET)
+    if asset is None:
+        return None
+    with rasterio.open(asset.href) as src:
+        geom = shape(_reproject_polygon(polygon, src.crs))
+        clipped, _ = rio_mask(src, [mapping(_scl_window(geom, SCL_MIN_SPAN_M))],
+                              crop=True, filled=False)
+        return np.asarray(clipped[0].compressed(), dtype=np.uint8)

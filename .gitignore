@@ -18,3 +18,9 @@ data/
 apps/web/test-results/
 apps/web/playwright-report/
 coverage/
+
+# --- Infrastructure harness : JAMAIS versionnee (regle harness-meta). ---
+# Les sauvegardes locales pesent >100 Mo (limite GitHub) : les committer bloquait TOUT push
+# (mesure du 2026-09-16 : 466 Mo de .tar.gz dans l'historique -> « pre-receive hook declined »).
+.harness/backups/
+.harness/agents/hooks/*.log

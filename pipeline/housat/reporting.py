@@ -60,8 +60,15 @@ def last_iso_week(ref: date | None = None) -> tuple[date, date]:
     return start, start + timedelta(days=6)
 
 
+_TYPO = {"\u2014": "-", "\u2013": "-", "\u2022": "-", "\u00b7": "-",
+         "\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"', "\u2026": "..."}
+
+
 def _latin1(s: str) -> str:
-    """Helvetica standard = Latin-1 : remplace proprement ce qui depasse (tirets, etc.)."""
+    """Helvetica standard = Latin-1 : traduit la typographie riche (tirets longs, puces, guillemets
+    courbes) au lieu d'afficher « ? » dans un livrable client, puis remplace le reste."""
+    for src, dst in _TYPO.items():
+        s = s.replace(src, dst)
     return s.encode("latin-1", errors="replace").decode("latin-1")
 
 
@@ -124,8 +131,15 @@ def render_weekly_pdf(
     alerts: list[dict[str, Any]],
     week_start: date,
     week_end: date,
+    hr_png: bytes | None = None,
+    hr_label: str = "",
 ) -> bytes:
-    """Rend le PDF hebdomadaire : KPI, avant/apres, observations, alertes, limites."""
+    """Rend le PDF hebdomadaire : KPI, vue HR (lecture), avant/apres, observations, alertes, limites.
+
+    `hr_png` (optionnel) = image haute resolution de la parcelle (imagerie d'archive) : c'est la vue
+    LISIBLE pour le client ; les images Sentinel-2 ci-dessous restent la MESURE. Le module reste pur
+    (aucun IO reseau) : c'est l'appelant qui fournit l'image.
+    """
     styles = getSampleStyleSheet()
     h2 = ParagraphStyle("h2x", parent=styles["Heading2"], fontSize=13, spaceBefore=10,
                         spaceAfter=4, textColor=colors.HexColor("#1f2937"))
@@ -148,13 +162,17 @@ def render_weekly_pdf(
     story.append(Spacer(1, 4 * mm))
 
     kpi = week_kpis(rows)
+    ms_n = kpi["milestone"]
     kpi_rows = [
-        ("Dernier jalon", f"M{kpi['milestone']} - {kpi['milestone_label']}"
-         if kpi["milestone"] is not None else "n/d"),
-        ("Pivot confirme", "oui" if kpi["pivot"] else "non"),
-        ("Progression de la semaine",
+        # Colonne de GAUCHE = la question du proprietaire, pas le vocabulaire de l'ingenieur
+        # (M0..M4, PV cumulee, pivot) : le client lit « ou en est ma maison ? ».
+        ("Ou en est votre maison ?",
+         f"Etape {ms_n + 1} sur 5 - {kpi['milestone_label']}"
+         if ms_n is not None else "pas encore evalue"),
+        ("Avancement cette semaine",
          f"{kpi['progression']} %" if kpi["progression"] is not None else "n/d"),
-        ("Confiance moyenne",
+        ("Observations de la semaine", str(kpi["observations"])),
+        ("Fiabilite de la detection",
          f"{kpi['confidence_avg']:.2f}" if kpi["confidence_avg"] is not None else "n/d"),
     ]
     kt = Table([[Paragraph(f"<b>{_latin1(a)}</b>", body), Paragraph(_latin1(str(b)), body)]
@@ -166,33 +184,55 @@ def render_weekly_pdf(
     ]))
     story.append(kt)
 
+    if hr_png:
+        story.append(Paragraph(_latin1("Vue haute resolution de la parcelle (lecture)"), h2))
+        story.append(_image_flowable(hr_png))
+        if hr_label:
+            story.append(Paragraph(_latin1(hr_label), small))
+        story.append(Spacer(1, 3 * mm))
+
     imgs = [r for r in rows if r.get("image_png")]
     if imgs:
-        story.append(Paragraph(_latin1("Avant / apres (semaine)"), h2))
-        cells = []
-        for r, tag in ((imgs[0], "Debut"), (imgs[-1], "Fin")):
-            cells.append([_image_flowable(r["image_png"]),
-                          Paragraph(_latin1(f"{tag} : {str(r.get('obs_date', ''))[:10]}"), small)])
-        it = Table([cells], colWidths=[82 * mm, 82 * mm])
-        it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-        story.append(it)
+        # Une semaine a UNE seule observation ne doit pas s'afficher « Avant / apres » avec la meme
+        # date des deux cotes : deux vignettes identiques font croire a un bug au client.
+        pair = len(imgs) > 1
+        story.append(Paragraph(_latin1("Avant / apres (semaine)" if pair
+                                       else "Observation de la semaine"), h2))
+        if pair:
+            cells = []
+            for r, tag in ((imgs[0], "Debut"), (imgs[-1], "Fin")):
+                cells.append([_image_flowable(r["image_png"]),
+                              Paragraph(_latin1(f"{tag} : {str(r.get('obs_date', ''))[:10]}"), small)])
+            it = Table([cells], colWidths=[82 * mm, 82 * mm])
+            it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+            story.append(it)
+        else:
+            story.append(_image_flowable(imgs[0]["image_png"]))
+            story.append(Paragraph(_latin1(str(imgs[0].get("obs_date", ""))[:10]), small))
 
     story.append(Paragraph(_latin1("Observations de la semaine"), h2))
-    header = ["Date", "Jalon", "Pivot", "Confiance", "PV cumulee", "Emprise"]
+    header = ["Date", "Etape du chantier", "Confirmee", "Fiabilite", "Changement",
+              "Terrain modifie"]
     data = [[Paragraph(f"<b>{h}</b>", body) for h in header]]
     for r in rows[:20]:
         p = _payload(r)
-        label = str(p.get("milestone_label") or "baseline")
+        label = str(p.get("milestone_label") or "point de depart")
         ms = p.get("milestone", r.get("milestone"))
+        try:  # part de la parcelle ou un changement est mesure (fraction -> %)
+            terrain = f"{float(p.get('emprise')) * 100:.1f} %"
+        except (TypeError, ValueError):
+            terrain = "n/d"
         data.append([
             str(r.get("obs_date", ""))[:10],
-            _latin1(f"M{ms} {label}" if ms is not None else label),
+            _latin1(f"Etape {ms + 1} - {label}" if ms is not None else label),
             "oui" if (p.get("pivot_confirme") or r.get("pivot_confirme")) else "non",
             _fmt(r.get("confidence"), 2),
             _fmt(p.get("pv_sum"), 1),
-            _fmt(p.get("emprise"), 4),
+            terrain,
         ])
-    t = Table(data, colWidths=[24 * mm, 60 * mm, 14 * mm, 20 * mm, 24 * mm, 22 * mm],
+    # Largeurs calees sur les libelles reels (Helvetica 8 et 8-gras + padding 6 pt mesure a la
+    # compilation) : aucun en-tete ni valeur ne se replie sur 2 lignes dans le tableau client.
+    t = Table(data, colWidths=[20 * mm, 55 * mm, 22 * mm, 18 * mm, 25 * mm, 28 * mm],
               repeatRows=1)
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
@@ -283,8 +323,13 @@ def _fetch_week(engine: Engine, site_id: int, start: date, end: date
     return dict(site), rows, alerts
 
 
-def build_weekly_report(engine: Engine, site_id: int, week_start: date) -> dict[str, Any]:
-    """Construit + persiste le rapport hebdo. Leve NoObservations/DuplicateReportError."""
+def build_weekly_report(engine: Engine, site_id: int, week_start: date,
+                        hr_png: bytes | None = None, hr_label: str = "") -> dict[str, Any]:
+    """Construit + persiste le rapport hebdo. Leve NoObservations/DuplicateReportError.
+
+    `hr_png`/`hr_label` (optionnels) : vue haute resolution fournie par l'appelant (l'API), pour un
+    PDF LISIBLE. Le module reste sans IO reseau.
+    """
     if week_start.weekday() != 0:
         raise ReportError("week_start doit etre un lundi (debut de semaine ISO)")
     ensure_report_table(engine)
@@ -299,7 +344,7 @@ def build_weekly_report(engine: Engine, site_id: int, week_start: date) -> dict[
     if not rows:
         raise NoObservationsError(f"chantier {site_id} : aucune observation "
                                   f"semaine {week_start.isoformat()}")
-    pdf = render_weekly_pdf(site, rows, alerts, week_start, week_end)
+    pdf = render_weekly_pdf(site, rows, alerts, week_start, week_end, hr_png, hr_label)
     digest = hashlib.sha256(pdf).hexdigest()
     # Format TIMESTAMP partage : compatible SQLAlchemy DATETIME (SQLite) et TIMESTAMP (PG).
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")

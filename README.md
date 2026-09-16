@@ -7,7 +7,7 @@
 [![Accessibilite WCAG 2.1 AA](https://img.shields.io/badge/Accessibilit%C3%A9-WCAG%202.1%20AA-emerald?style=flat-square)](https://www.w3.org/WAI/WCAG21/quickref/)
 [![Licence Proprietaire](https://img.shields.io/badge/Licence-Propri%C3%A9taire-slate?style=flat-square)](LICENSE)
 
-> Plateforme de télédétection et d'audit automatisé de chantiers résidentiels individuels : acquisition Sentinel-2 sans frais d'entrée, surrésolution IA à 2,5 m, qualification phénoménologique de pivots de construction (M0–M4), comparateur cartographique MapLibre/OSM et génération autonome de rapports PDF hebdomadaires vérifiables par empreinte cryptographique.
+> Plateforme de télédétection et d'audit automatisé de chantiers résidentiels individuels : acquisition Sentinel-2 sans frais d'entrée, fond satellite haute résolution pour une lisibilité universelle, surrésolution neuronale optionnelle (SEN2SR), qualification phénoménologique de pivots de construction (M0–M4), comparateur cartographique MapLibre et génération autonome de rapports PDF hebdomadaires vérifiables par empreinte cryptographique.
 
 **Démonstration locale :** `http://localhost:8080` (Web) | `http://localhost:8000/docs` (Spécification OpenAPI)
 
@@ -17,6 +17,7 @@
 
 - [Aperçu](#aperçu)
 - [Fonctionnalités](#fonctionnalités)
+- [Ce que l'outil mesure — et ce qu'il ne peut pas dire](#ce-que-loutil-mesure--et-ce-quil-ne-peut-pas-dire)
 - [Architecture technique](#architecture-technique)
 - [Mécanisme de détection et V&V phénoménologique](#mécanisme-de-détection-et-vv-phénoménologique)
 - [Structure du dépôt](#structure-du-dépôt)
@@ -55,20 +56,44 @@ Chantier distant (ex. Douala, Abidjan, Port-au-Prince)
 
 | Module | Interface / Endpoint | Rôle & capacité opérationnelle |
 |---|---|---|
-| **Formulaire parcelle** | `/` (Web) & `POST /sites` | Enregistrement de l'emprise parcellaire (bbox EPSG:4326), validation surfacique (< 2 km²). |
-| **Rétro-analyse (backfill)** | `POST /sites/{id}/backfill` | Récupération asynchrone (HTTP 202) des scènes d'archive les moins nuageuses via STAC, calage sur ancre $t_0$. |
-| **Vérification instantanée** | `POST /sites/{id}/check` | Interrogation de la scène la plus récente (`mode="latest"`), calcul d'évolutions et franchissement de jalon. |
-| **Carte d'emprise géoréférencée** | Composant `MapView.tsx` | Moteur MapLibre GL JS + tuiles OSM (0 $), fitBounds automatique, superpositions raster matricielles calées sur `image_bbox`. |
-| **Comparateur inter-périodes** | Composant `CompareSlider` | Double fader d'opacité cartographique et curseur coulissant pixel-aligné (masquage `clip-path`). |
-| **Rapports hebdomadaires** | `GET/POST /sites/{id}/reports/{week}` | Moteur ReportLab pur Python : tableau d'observations, KPI $pv\_sum$, images avant/après et empreinte SHA-256 en en-tête `ETag`. |
-| **Veille & alertes in-app** | `GET /sites/{id}/alerts` | Journal d'événements monotone : signalement des franchissements de jalons irréversibles sans régression parasite. |
+| **Formulaire parcelle** | `/` (Web) & `POST /sites` | Enregistrement de l'emprise (bbox EPSG:4326), validation surfacique (< 2 km²), garde anti-doublon (409). Défaut = **parcelle individuelle de 22 m** (~0,0002°), pas un îlot. |
+| **Dessin d'emprise** | `SiteMap` (MapLibre GL JS) | « Dessiner une emprise à analyser » : clic maintenu + glissement → rectangle orange, relâche = emprise fixée sur les deux cartes synchronisées (déplacement de carte suspendu pendant le dessin), puis « Créer un chantier sur cette emprise ». |
+| **Rétro-analyse** | `POST /sites/{id}/backfill` | Récupération asynchrone (HTTP 202) des scènes d'archive les moins nuageuses via STAC, calage sur ancre $t_0$ ; lancée automatiquement à la création d'un chantier depuis la carte. |
+| **Vérification instantanée** | `POST /sites/{id}/check` | Interrogation de la scène la plus récente (`mode="latest"`), calcul d'évolutions et franchissement d'étape. |
+| **Vue réelle haute résolution (lecture)** | `GET /parcel/wayback/dates`, `GET /parcel/wayback/tile` | Deux cartes datées synchronisées (imagerie d'archive Esri Wayback, ~0,30 m/px) avec tuiles proxifiées *same-origin* (l'URL Esri reste côté serveur, cache immuable) — c'est **la voie de lecture** : c'est là qu'on voit une maison. |
+| **Caractérisation d'emprise** | `GET /parcel/buildings` (OSM/ODbL) | Bâtiments du carré, part bâtie **coupée à l'emprise** (shapely), `unavailable` si Overpass n'a pas répondu. Retiré de l'IHM (couverture nulle à Douala, service intermittent) mais conservé côté API. |
+| **Rapports hebdomadaires** | `GET/POST /sites/{id}/reports/{week}` | Moteur ReportLab pur Python : KPI en langage client (« Où en est votre maison ? — étape N sur 5 »), vue HR, table d'observations, empreinte SHA-256 en en-tête `ETag`. La semaine proposée est celle de la **dernière observation**, jamais une semaine vide. |
+| **Veille & alertes in-app** | `GET /sites/{id}/alerts` | Journal d'événements **monotone** : « Étape franchie : … » sans régression parasite. |
+| **Preuve de l'étape** | `GET /sites/{id}/progress` | Expose **le plus haut jalon atteint** + sa preuve : `milestone_date`, `milestone_emprise` (% du carré modifié), `milestone_pv` (indice de changement), `anchor_date` (image d'ancrage). |
 
 ### Interactions utilisateur
 
 - **Déduplication amont sans coût réseau :** Une scène d'archive ou un passage déjà analysé n'est ni re-téléchargé ni re-surrésolu (`status="duplicate"`).
 - **Contrôle d'intégrité cryptographique :** Chaque rapport PDF généré est signé par son empreinte SHA-256 stockée en base et exposée dans l'en-tête HTTP `ETag`.
-- **Régression de jalon neutralisée :** Les alertes sont strictement monotones ($M_t \ge \max(M_{<t})$) pour prévenir les faux positifs saisonniers ou d'enneigement/pluviométrie.
+- **Régression d'étape neutralisée :** Les alertes **et** l'étape affichée sont strictement monotones ($M_t \ge \max(M_{<t})$) : une scène ultérieure sans changement ne « redescend » plus l'affichage à « terrain nu » (ADR 0013).
+- **Vocabulaire client :** le client lit « étape », « indice de changement », « % du carré modifié » ; le jargon (`pv_sum`, `pivot_confirme`, `sr_method`) est replié dans « Détails techniques ». Table de correspondance : [`docs/glossaire.md`](docs/glossaire.md).
 - **Accessibilité universelle :** Rôles ARIA explicites (`role="application"` pour la carte, `role="alert"` pour les retours API), gestion du contraste et adaptation à `prefers-reduced-motion`.
+
+---
+
+## Ce que l'outil mesure — et ce qu'il ne peut pas dire
+
+> Synthèse ; le document de référence est [`docs/limites-et-honnetete.md`](docs/limites-et-honnetete.md).
+
+**Ce qui est mesuré** : l'**emprise déclarée** (un rectangle), en entier. **Jamais un bâtiment désigné
+nommément.** L'étape M0-M4 est la sortie d'un **classifieur à seuils** sur les indices NDVI/NDBI/BSI
+comparés à l'**image d'ancrage** — ce n'est pas une lecture d'image, et ce n'est pas un modèle de
+vision (U-Net siamois prévu en phase 2).
+
+| Limite | Conséquence concrète |
+|---|---|
+| **10 m par point de mesure** | Une maison individuelle = **1 à 3 points**. Aucune surrésolution ne compense un facteur 15-30× : le bâti **se lit** sur l'imagerie d'archive (0,3-0,5 m), il **se mesure** sur Sentinel-2. Les deux voies ne se confondent jamais dans l'IHM. |
+| **Pixels mixtes** | Sur une emprise de maison, chaque point contient la parcelle **et ses voisines** : l'étape peut rester « terrain nu » alors que les travaux avancent. Mesure discriminante à partir d'environ **30 m** de côté. |
+| **Nuages = saison** | À Douala, **0 passage exploitable sur 33** en saison des pluies, même avec le masque par parcelle : c'est la météorologie, pas un défaut logiciel (SAR = piste, non implémentée). |
+| **Cadence de l'archive** | Esri Wayback ≈ **mensuel** (dernière release vérifiée : **2026-08-05**). La cadence **5-7 j** demandée est celle de Sentinel-2 (écart médian mesuré : **3 j**). |
+| **Fiabilité** | `0,55` en repli bicubique (SEN2SR non installé → ×0,7) : l'IHM l'affiche avec sa cause. |
+| **Un seul processus API** | Un backfill affame le proxy de tuiles (0,5-2,1 s/tuile, rendu complet ≈ 3 s hors backfill). Correctif identifié : service `worker` séparé. |
+| **Licence Esri** | Tuiles non redistribuables : affichage/lecture en ligne uniquement ; tout embarquement dans un livrable client reste **à valider juridiquement**. |
 
 ---
 
@@ -79,12 +104,13 @@ Chantier distant (ex. Douala, Abidjan, Port-au-Prince)
 | Couche | Technologie retenue | Justification d'ingénierie (décision CTO) |
 |---|---|---|
 | **Acquisition satellite** | STAC Client / Element84 AWS | Entrées Sentinel-2 L2A gratuites, sans quota restrictif et sans clé d'API. |
-| **Surrésolution spectrale** | ESA OpenSR (SEN2SR) | Quadruplement de résolution (10 m -> 2,5 m) par inférence neuronale ; repli bicubique tracé sans GPU. |
+| **Fond visuel (affichage)** | Esri World Imagery / Planet NICFI | Lisibilité de **toute** emprise lat/long : haute résolution à l'écran (Esri) ; NICFI 4,77 m **daté et redistribuable** pour les rapports. Sentinel-2 = détection, fond = contexte. |
+| **Surrésolution** | SEN2SR (détection) · EDSR-lite ONNX (affichage) | Deux voies cloisonnées : **détection** (SEN2SR satellite ou bicubique honnête) et **affichage** (`housat_sr`, EDSR-lite ×4 servi en **ONNX Runtime CPU, sans torch**, modèle régional remplaçable — ADR 0007). Rendu PNG par étirement 2-98 % + gamma + léger rehaussement. |
 | **Moteur d'indices** | NumPy + Rasterio + Shapely | Calcul vectoriel des réflectances (NDVI, NDBI, BSI), troncature d'anneau périphérique et masquage robuste. |
 | **Couche applicative API** | FastAPI + SQLModel | Typage strict Python 3.11, sérialisation Pydantic v2, erreurs standardisées RFC 7807 (`application/problem+json`). |
 | **Persistance & géomatique** | PostgreSQL 16 + PostGIS / SQLite | Stockage géométrique, unicité `(site_id, obs_date)`, colonnes binaires en chargement différé (`deferred=True`). |
 | **Moteur d'éditique** | ReportLab 4.2 | Rendu PDF vectoriel pur Python sans dépendances système C (rejet de WeasyPrint pour incompatibilité avec conteneurs légers). |
-| **Frontend Web** | React 18 + Vite + MapLibre GL | Bundle léger (< 180 Ko gzippé), tuiles cartographiques vectorielles/raster OSM souveraines sans abonnement tiers. |
+| **Frontend Web** | React 18 + Vite + MapLibre GL | Bundle léger, fond satellite haute résolution sans abonnement tiers (Esri World Imagery) ; le Sentinel-2 reste en overlay géoréférencé. |
 | **Infrastructure & orchestration** | Docker Compose multi-étapes + Caddy | Déploiement en une seule commande, conteneurs non-root sécurisés (UID 1000), reverse proxy Caddy ultra-performant. |
 
 ### Flux de données de bout en bout
@@ -122,7 +148,7 @@ Chantier distant (ex. Douala, Abidjan, Port-au-Prince)
 │  apps/web (React 18 + Vite + MapLibre sur Caddy : 8080)       │
 │  ├─ Formulaire de bornage parcellaire (bboxfinder compatible)│
 │  ├─ Dashboard de progression temporelle & alertes monotones  │
-│  ├─ Carte OSM avec calques géoréférencés TL/TR/BR/BL         │
+│  ├─ Carte (fond satellite + calques géoréférencés TL/TR/BR/BL)│
 │  └─ Téléchargement instantané des rapports PDF certifiés     │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -206,8 +232,7 @@ Housat/
 │       │   └── app.spec.ts        # Tests Playwright hors-ligne (résilience réseau)
 │       └── src/
 │           ├── main.tsx           # Point d'entrée de l'application cliente
-│           ├── App.tsx            # Dashboard, formulaires, panneaux d'alertes & rapports
-│           ├── MapView.tsx        # Composant cartographique MapLibre GL JS (fond OSM + overlays)
+│           ├── App.tsx            # Dashboard, dessin d'emprise, état + preuve, panneaux rapports
 │           └── styles.css         # Système de design responsive épuré
 ├── pipeline/
 │   ├── Dockerfile                 # Image conteneur worker autonome (CLI de traitement batch)
@@ -231,7 +256,9 @@ Housat/
 │       └── milestones.py      # Règles de transition d'états de chantier
 │       └── imagery/
 │           ├── sentinel2.py       # Interrogation du catalogue STAC Element84 et découpe CRS
-│           └── super_resolution.py# Inférence SEN2SR et repli cubique à géométrie unifiée
+│           ├── rendering.py       # Rendu d'affichage RGB (étirement percentile 2-98 % + gamma + rehaussement)
+│           ├── basemap.py         # Fond visuel haute résolution pour toute emprise lat/long (cascade + licence)
+│           └── super_resolution.py# Surrésolution à deux voies : SEN2SR (détection) + ONNX (affichage)
 ├── infra/
 │   └── docker-compose.yml         # Environnement local complet (PostGIS, API, Web, Worker)
 ├── docs/
@@ -239,8 +266,15 @@ Housat/
 │   ├── competitive-analysis.md    # Analyse de marché et positionnement unitaire (diaspora)
 │   ├── roadmap-90-days.md         # Jalons de mise sur le marché et modèle de revenus
 │   ├── verification.md            # Matrice d'assurance qualité et critères A1 à A10
+│   ├── limites-et-honnetete.md    # DOCUMENT DE RÉFÉRENCE : ce qui est mesuré, ce qui ne peut pas être affirmé
+│   ├── glossaire.md               # Jargon interne ↔ langage client (règle d'écriture de l'IHM)
 │   └── adr/
-│       └── 0001-stack-zero-dollar.md # Arbitrages d'ingénierie sur l'infrastructure gratuite
+│       ├── 0001-stack-zero-dollar.md                   # Arbitrages d'ingénierie sur l'infrastructure gratuite
+│       ├── …
+│       ├── 0010-masque-nuage-par-parcelle.md           # Filtrer les nuages sur la parcelle, pas la tuile
+│       ├── 0011-emprise-dessinee-et-portee-de-la-mesure.md  # L'utilisateur dessine ; la mesure porte sur l'emprise
+│       ├── 0012-validite-de-la-mesure-petites-emprises.md    # filled=False + voisinage SCL 60 m (maisons 10-20 m)
+│       └── 0013-etape-monotone-et-preuve-affichee.md         # Étape = plus haut jalon + preuve chiffrée affichée
 ├── .gitignore
 ├── .env.example                   # Gabarit des variables d'environnement documentées
 └── README.md
@@ -342,7 +376,7 @@ cd apps/web && npm install && npm run test:e2e
   Phase 0 : Socle V&V & MVP local (Terminée - v0.5.4)
   [x] Acquisition Sentinel-2 STAC 0 $ + surrésolution SEN2SR
   [x] Qualification phénoménologique des pivots (M0 à M4)
-  [x] Tableau de bord web React 18 + carte MapLibre/OSM synchronisée
+  [x] Tableau de bord web React 18 + carte MapLibre (fond satellite haute résolution) synchronisée
   [x] Génération de rapports PDF certifiés par hachage SHA-256
   [x] Durcissement des flux de données (grilles unifiées, déduplication, chargement différé)
          │

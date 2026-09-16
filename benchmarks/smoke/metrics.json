@@ -1,0 +1,49 @@
+{
+  "bbox": [
+    9.7,
+    4.04,
+    9.71,
+    4.05
+  ],
+  "hr_size": 64,
+  "lr_size": 16,
+  "factor": 4,
+  "runs": [
+    {
+      "name": "nearest",
+      "device": "cpu",
+      "available": true,
+      "seconds": 7.790000381646678e-05,
+      "psnr": 19.098,
+      "ssim": 0.2369,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.187860100006219,
+      "psnr": 19.025,
+      "ssim": 0.2021,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cpu",
+      "available": false,
+      "seconds": 19.728012200001103,
+      "psnr": null,
+      "ssim": null,
+      "note": "ModuleNotFoundError: Could not import module 'Swin2SRForImageSuperResolution'. Are this object's requirements defined correctly?"
+    },
+    {
+      "name": "sen2sr",
+      "device": "cpu",
+      "available": false,
+      "seconds": 0.011290099995676428,
+      "psnr": null,
+      "ssim": null,
+      "note": "TypeError: predict_large() missing 1 required positional argument: 'model'"
+    }
+  ]
+}

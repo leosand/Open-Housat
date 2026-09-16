@@ -1,0 +1,62 @@
+{
+  "naip_test": [
+    {
+      "method": "bicubic",
+      "psnr": 39.383,
+      "ssim": 0.9431,
+      "lpips": 0.2947,
+      "note": ""
+    },
+    {
+      "method": "swin2sr",
+      "psnr": 40.052,
+      "ssim": 0.9507,
+      "lpips": 0.2488,
+      "note": ""
+    },
+    {
+      "method": "housat_sr[l1]",
+      "psnr": 40.437,
+      "ssim": 0.9508,
+      "lpips": 0.2297,
+      "note": ""
+    },
+    {
+      "method": "housat_sr[perceptual]",
+      "psnr": 39.689,
+      "ssim": 0.9392,
+      "lpips": 0.0881,
+      "note": ""
+    }
+  ],
+  "spot_cross": [
+    {
+      "method": "bicubic",
+      "psnr": 35.214,
+      "ssim": 0.8586,
+      "lpips": 0.4385,
+      "note": ""
+    },
+    {
+      "method": "swin2sr",
+      "psnr": 35.236,
+      "ssim": 0.8706,
+      "lpips": 0.3807,
+      "note": ""
+    },
+    {
+      "method": "housat_sr[l1]",
+      "psnr": 33.23,
+      "ssim": 0.8579,
+      "lpips": 0.3784,
+      "note": ""
+    },
+    {
+      "method": "housat_sr[perceptual]",
+      "psnr": 32.22,
+      "ssim": 0.8318,
+      "lpips": 0.1831,
+      "note": ""
+    }
+  ]
+}

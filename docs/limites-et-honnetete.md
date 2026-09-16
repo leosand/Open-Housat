@@ -1,0 +1,92 @@
+# Limites et honnêteté des mesures
+
+> Statut : document de référence, 2026-09-16. Il décrit **ce que Housat peut affirmer**, **sur quelle
+> base**, et **ce qu'il ne peut pas dire**. Toute affirmation de l'interface doit pouvoir être reliée
+> à un chiffre de ce document. Si une phrase de l'IHM contredit ce fichier, c'est l'IHM qui a tort.
+
+## 1. Ce qui est mesuré, exactement
+
+| Objet | Réalité technique |
+|---|---|
+| **Ce qui est mesuré** | L'**emprise** déclarée (un rectangle lon/lat), **en entier**. Jamais un bâtiment désigné nommément. |
+| **Source de mesure** | Sentinel-2 L2A, **10 m par point** (bandes), **20 m** pour la couche de nuages SCL. |
+| **Indices** | NDVI (végétation), NDBI (bâti), BSI (sol nu), comparés à l'**image d'ancrage** $t_0$. |
+| **Étape (M0-M4)** | Sortie d'un **classifieur à seuils** (`pipeline/housat/observations.py::milestone_decision` + `detection/milestones.py`), **pas** une lecture d'image ni un modèle de vision. |
+| **Rapport** | Le PDF reprend les **mêmes** chiffres persistés : aucune donnée recalculée à la génération. |
+
+Règle de lecture des jalons (`milestone_decision`) :
+
+| Condition mesurée | Jalon affiché |
+|---|---|
+| pivot détecté **et** zone changée en croissance (> 0,01) | **M2** structure |
+| pivot détecté seul | **M3** toiture |
+| zone changée en croissance (> 0,02) | **M1** fondations |
+| zone changée > 25 % **et** activité très faible (< 0,01) | **M4** finition |
+| aucun des cas ci-dessus | **M0** terrain nu |
+
+## 2. Limites physiques (non négociables)
+
+1. **Résolution — la limite structurante.** Un point de mesure = 10 m. Une maison individuelle occupe
+   **1 à 3 points**, un carré de 178 m en occupe 18 × 18. Conséquence : **aucune surrésolution ne
+   compense un facteur 15-30×** (ADR 0002, ADR 0003). Le bâti **se lit** sur l'imagerie d'archive
+   haute résolution (0,3-0,5 m) ; il **se mesure** sur Sentinel-2. Ces deux voies ne doivent jamais
+   être confondues.
+2. **Pixels mixtes.** Sur une emprise de maison, chaque point de 10 m contient la parcelle **et ses
+   voisines**. Le signal est donc dilué : l'étape peut rester « terrain nu » alors que les travaux
+   avancent. La mesure devient discriminante à partir d'environ **30 m de côté**.
+3. **Nuages = saison.** En saison des pluies (Douala : mai-septembre), **même le masque par
+   parcelle** peut ne rien laisser passer : mesuré 0 passage exploitable sur 33. Ce n'est pas un
+   défaut logiciel, c'est la météorologie (d'où l'intérêt du **SAR** en complément, non implémenté).
+4. **Cadence réelle de l'imagerie d'archive.** Esri Wayback n'est **pas** quotidien (~mensuel ;
+   dernière release vérifiée le **2026-08-05**). La **cadence 5-7 j** demandée est celle de
+   Sentinel-2 (écart médian mesuré : **3 j**), pas celle de l'imagerie lisible.
+5. **Bâti individuel non isolable.** Suivre *un* bâtiment automatiquement (détection + suivi) n'est
+   pas possible à 10 m. Ce qui est fait : mesurer **exactement le rectangle que l'utilisateur
+   dessine**, et le dire.
+
+## 3. Limites de qualité de la mesure
+
+1. **Confiance.** `confidence = 0.9` (baseline d'ancrage), `0.8` si la surrésolution satellite
+   (SEN2SR) est active, **`0.55` en repli bicubique** — puis ×0,7 si le moteur SR n'est pas la voie
+   satellite (`detection/milestones.py`). Dans le déploiement actuel, **SEN2SR n'est pas installé** :
+   toutes les mesures sont en repli, la fiabilité affichée est **0,55** et l'IHM l'écrit.
+2. **Nuage par parcelle, et son voisinage.** Sous **60 m de côté**, une emprise ne couvre aucun
+   centre de pixel SCL (20 m) : le test nuage est alors fait sur un **voisinage de 60 m** centré sur
+   l'emprise (ADR 0012). La mesure, elle, reste sur l'emprise exacte. C'est dit dans le code et dans
+   le CHANGELOG ; ce n'est pas dit dans l'IHM (limite assumée, à corriger si le produit grandit).
+3. **Étape indicative aux petites échelles.** À 2 × 1 points, « 8 % de changement robuste » sur
+   l'emprise n'est pas une preuve. L'IHM affiche donc **la date qui a établi l'étape, l'ancrage, les
+   deux chiffres et la fiabilité** : à l'utilisateur de juger (ADR 0013).
+4. **Comparaison à l'ancrage $t_0$ uniquement** : hystérésis précise, réactivité lente. Une pointe
+   isolée ne déplace pas l'étape.
+5. **Seuils = décision produit.** Les seuils (20 % de nuages, 0,01-0,02 de croissance, 25 % d'emprise)
+   sont des choix, pas des lois physiques. Ils sont dans le code, testés, et modifiables.
+
+## 4. Limites d'infrastructure et de données
+
+1. **Un seul processus API.** Le travail lourd (backfill, surrésolution) tourne dans le processus de
+   l'API (`BackgroundTasks`) : pendant une recherche d'images, le **proxy de tuiles est affamé** et
+   les cartes se remplissent lentement (mesuré : 0,5-2,1 s par tuile, rendu complet ≈ 3 s **hors**
+   backfill). Correctif structurel identifié : déporter le travail dans le service `worker` (déjà
+   défini dans `infra/docker-compose.yml`), ou servir N workers uvicorn.
+2. **Pas de cache serveur des tuiles** : chaque tuile non mise en cache navigateur est un aller-retour
+   vers Esri.
+3. **Overpass (OSM) est intermittent** : mesuré 200 en 1,4 s, puis 504 en 8,5 s, POST comme GET. Le
+   code essaie deux endpoints et **remonte l'échec** (`unavailable`) au lieu d'un faux « 0 bâtiment ».
+4. **Couverture OSM inégale** : le carré de démonstration de Douala contient **0 bâtiment** cartographié,
+   un carré voisin de 1,4 km en contient **1 719**. Conclusion assumée : **aucun verdict produit ne
+   repose sur OSM**.
+5. **Licences** : les tuiles Esri ne sont **pas** redistribuables — elles servent l'affichage et la
+   lecture en ligne ; les rapports livrés utilisent ReportLab + les images Sentinel-2 (Copernicus) et
+   OSM (ODbL) selon attribution. Toute embarquement d'imagerie Esri dans un livrable client est **à
+   valider juridiquement** (dette ouverte).
+
+## 5. Ce que le produit ne prétend PAS faire
+
+- Il ne **voit** pas une maison : il **mesure une emprise**.
+- Il ne remplace pas une **visite de chantier** ni un **constat d'huissier** : il fournit un indice
+  daté, reproductible et scellé (SHA-256), à confronter au terrain.
+- Il ne fonctionne pas **par tous les temps** : en saison des pluies, la mesure s'arrête — la lecture
+  d'archive reste disponible.
+- Il ne suit pas **un logement dans un immeuble** ni une parcelle non délimitée « à la main » :
+  c'est le rectangle déclaré qui est mesuré.

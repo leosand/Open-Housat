@@ -1,0 +1,30 @@
+# Contexte de build = RACINE du depot (services api et web).
+# N'inclure que le necessaire : pipeline/, apps/api|web, requirements. Exclure venvs, caches,
+# artefacts de benchmark et SECRETS (.env) — sinon le contexte embarque plusieurs Go (torch).
+.git
+.gitignore
+.github
+.venv
+.harness
+.pytest_cache
+.ruff_cache
+.uv-cache
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+node_modules
+**/node_modules
+apps/web/dist
+apps/web/test-results
+apps/web/playwright-report
+benchmarks
+logs
+*.db
+*.sqlite
+.env
+.env.*
+!.env.example
+docs
+CHANGELOG.md
+README.md

@@ -1,0 +1,85 @@
+{
+  "bbox": [
+    -72.34,
+    18.54,
+    -72.33,
+    18.55
+  ],
+  "hr_size": 512,
+  "lr_size": 128,
+  "factor": 4,
+  "runs": [
+    {
+      "name": "nearest",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.0009103999982471578,
+      "psnr": 16.552,
+      "ssim": 0.5155,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cpu",
+      "available": true,
+      "seconds": 0.5811574999970617,
+      "psnr": 17.493,
+      "ssim": 0.5634,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 14.601666500006104,
+      "psnr": 17.382,
+      "ssim": 0.6601,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cpu",
+      "available": true,
+      "seconds": 7.277919500003918,
+      "psnr": 15.382,
+      "ssim": 0.4904,
+      "note": ""
+    },
+    {
+      "name": "nearest",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.0010718000048655085,
+      "psnr": 16.552,
+      "ssim": 0.5155,
+      "note": ""
+    },
+    {
+      "name": "bicubic",
+      "device": "cuda",
+      "available": true,
+      "seconds": 0.5453937999991467,
+      "psnr": 17.493,
+      "ssim": 0.5634,
+      "note": ""
+    },
+    {
+      "name": "swin2sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 2.3404295000000275,
+      "psnr": 17.382,
+      "ssim": 0.6601,
+      "note": ""
+    },
+    {
+      "name": "onnx_sr",
+      "device": "cuda",
+      "available": true,
+      "seconds": 9.305052299998351,
+      "psnr": 15.382,
+      "ssim": 0.4904,
+      "note": ""
+    }
+  ]
+}

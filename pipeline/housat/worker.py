@@ -20,8 +20,9 @@ from sqlalchemy.exc import IntegrityError
 from housat import observations as obs
 from housat.config import settings
 from housat.detection.change import bsi, ndbi, ndvi
-from housat.imagery.sentinel2 import SceneMeta, StacContext, fetch_bands
-from housat.imagery.super_resolution import upscale_bands
+from housat.imagery import clouds
+from housat.imagery.sentinel2 import SceneMeta, StacContext, fetch_bands, fetch_scl
+from housat.imagery.super_resolution import upscale_bands, upscale_rgb_display
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("housat.worker")
@@ -83,9 +84,30 @@ def _has_observation(engine: Engine, site_id: int, obs_date: str) -> bool:
     return row is not None
 
 
+def _parcel_clear(ctx: StacContext, polygon: dict, scene: SceneMeta) -> tuple[bool, float]:
+    """Verdict NUAGE **PAR PARCELLE** (SCL 20 m) — `eo:cloud_cover` couvre toute la tuile (~110 km).
+
+    On lit d'abord le SCL SEUL : si la parcelle est couverte, on evite de telecharger les 5 bandes.
+    SCL indisponible -> (True, nan) : repli NON bloquant (mieux vaut tenter la scene que la perdre),
+    toujours trace par un WARNING.
+    """
+    try:
+        scl = fetch_scl(ctx, polygon, scene)
+    except Exception:  # noqa: BLE001 — panne SCL : ne jamais bloquer la scene pour autant
+        logger.warning("SCL indisponible pour %s — scene conservee", scene.acquired, exc_info=True)
+        return True, float("nan")
+    if scl is None:
+        return True, float("nan")
+    pct = clouds.parcel_cloud_pct(scl)
+    if pct != pct:  # nan : aucune donnee SCL
+        return True, pct
+    return pct <= settings.max_cloud_cover, pct
+
+
 def _persist_observation(
     engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
     anchor_idx: list[np.ndarray] | None, sr_method: str, image_bbox: list[float],
+    raw_bands: dict[str, np.ndarray] | None = None,
 ) -> dict:
     """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone."""
     base: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
@@ -109,10 +131,20 @@ def _persist_observation(
                    "activite": round(float(np.mean([np.abs(d).mean() for d in divs])), 5),
                    "pv_sum": round(float(sum(obs.masked_sum(p) for p in pvs)), 3)}
         confidence = 0.8 if sr_method == "sen2sr" else 0.55
-    png = obs.image_png_rgb(bands)
+    # Voie AFFICHAGE : surresolution perceptuelle optionnelle, appliquee aux bandes BRUTES (LR 10 m)
+    # et non aux bandes de detection deja x4 (sinon double agrandissement x16, geometrie fausse).
+    # Sans modele configure, repli sur l'image de detection (comportement historique).
+    src = raw_bands if raw_bands is not None else bands
+    try:
+        display_bands, display_method = upscale_rgb_display(src)
+    except Exception:  # noqa: BLE001 — l'affichage ne doit jamais bloquer la persistance V&V
+        display_bands, display_method = bands, "error"
+    if display_method != "realesrgan":  # pas de modele SR : image de detection (x4) comme avant
+        display_bands = bands
+    png = obs.image_png_rgb(display_bands)
     prev_max = _max_milestone(engine, site_id)
     payload.update(milestone=milestone, milestone_label=MILESTONE_LABELS_FR[milestone],
-                   pivot_confirme=pivot, confidence=confidence)
+                   pivot_confirme=pivot, confidence=confidence, display_sr=display_method)
     try:
         with engine.begin() as c:
             c.execute(
@@ -122,8 +154,8 @@ def _persist_observation(
                 {"s": site_id, "d": scene.acquired.isoformat(), "m": milestone, "p": pivot,
                  "cf": confidence, "pl": json.dumps(payload), "img": png,
                  "t": datetime.now(timezone.utc)})
-            if milestone > prev_max:  # alertes monotones
-                msg = f"Jalon atteint : {MILESTONE_LABELS_FR[milestone]} (M{milestone})"
+            if milestone > prev_max and milestone > 0:  # alertes monotones ; M0 (terrain nu) = baseline, jamais alerte
+                msg = f"Etape franchie : {MILESTONE_LABELS_FR[milestone]}"
                 c.execute(text("INSERT INTO alerts (site_id, channel, message, milestone, sent_at)"
                                " VALUES (:s, 'in-app', :m, :ms, :t)"),
                           {"s": site_id, "m": msg, "ms": milestone, "t": datetime.now(timezone.utc)})
@@ -152,7 +184,7 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
         scenes = ctx.search_scenes(polygon, limit=limit, mode="archive")
         if not scenes:
             raise RuntimeError("aucune scene sous le seuil de nuages dans la fenetre")
-        results, anchor_idx, skipped = [], None, 0
+        results, anchor_idx, skipped, cloudy = [], None, 0, 0
         for scene in scenes:
             if _has_observation(engine, site_id, scene.acquired.isoformat()):
                 logger.info("site %s : scene %s deja presente, telechargement evite",
@@ -160,18 +192,28 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
                 skipped += 1
                 results.append({"status": "duplicate", "obs_date": scene.acquired.isoformat()})
                 continue
-            bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scene))
+            clear, pct = _parcel_clear(ctx, polygon, scene)
+            if not clear:
+                logger.info("site %s : scene %s ecartee (nuages PARCELLE %.1f %% > %.0f %%)",
+                            site_id, scene.acquired, pct, settings.max_cloud_cover)
+                cloudy += 1
+                results.append({"status": "cloudy", "obs_date": scene.acquired.isoformat(),
+                                "parcel_cloud_pct": round(pct, 1)})
+                continue
+            raw = fetch_bands(ctx, polygon, scene)          # LR 10 m (sert la voie affichage)
+            bands, sr_method = upscale_bands(raw)           # voie detection (radiometrique, x4)
             if anchor_idx is None:
                 anchor_idx = _indices(bands)
                 _save_frame(engine, site_id, "anchor", bands)
             _save_frame(engine, site_id, "prev", bands)
             results.append(_persist_observation(engine, site_id, scene, bands, anchor_idx,
-                                                sr_method, bbox))
+                                                sr_method, bbox, raw))
         with engine.begin() as c:
             c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
         persisted = [r for r in results if r.get("status") != "duplicate"]
         return {"site_id": site_id, "status": "done" if len(scenes) >= 2 else "baseline_only",
-                "scenes": len(persisted), "skipped": skipped, "results": results}
+                "scenes": len(persisted), "skipped": skipped, "cloudy": cloudy,
+                "results": results}
     except Exception as exc:  # noqa: BLE001 — trace en base, jamais silencieux
         logger.exception("backfill site %s", site_id)
         with engine.begin() as c:
@@ -188,16 +230,31 @@ def check_site(engine: Engine | None, site_id: int) -> dict:
     site = _get_site(engine, site_id)
     polygon = json.loads(site["polygon_geojson"])
     ctx = StacContext()
-    scenes = ctx.search_scenes(polygon, limit=1, window_days=settings.search_window_days,
-                               mode="latest")
-    if not scenes:
+    candidates = ctx.search_scenes(polygon, limit=6, window_days=settings.search_window_days,
+                                   mode="latest")
+    if not candidates:
         return {"site_id": site_id, "status": "cloud_pending"}
-    if _has_observation(engine, site_id, scenes[0].acquired.isoformat()):
-        logger.info("site %s : derniere scene %s deja traitee, aucun telechargement",
-                    site_id, scenes[0].acquired)
+    fresh = [s for s in candidates
+             if not _has_observation(engine, site_id, s.acquired.isoformat())]
+    if not fresh:  # tout est deja analyse : aucun cout reseau
+        logger.info("site %s : dernieres scenes deja traitees, aucun telechargement", site_id)
         return {"site_id": site_id, "status": "duplicate",
-                "obs_date": scenes[0].acquired.isoformat()}
-    bands, sr_method = upscale_bands(fetch_bands(ctx, polygon, scenes[0]))
+                "obs_date": candidates[0].acquired.isoformat()}
+    # Nuage PAR PARCELLE (SCL) : on retient la plus RECENTE dont la parcelle est degagee —
+    # le pre-filtre tuile (large) ne suffit pas a decider.
+    scene, pct = None, float("nan")
+    for cand in fresh:
+        clear, pct = _parcel_clear(ctx, polygon, cand)
+        if clear:
+            scene = cand
+            break
+        logger.info("site %s : scene %s ecartee (nuages parcelle %.1f %%)",
+                    site_id, cand.acquired, pct)
+    if scene is None:
+        return {"site_id": site_id, "status": "cloud_pending",
+                "parcel_cloud_pct": round(pct, 1) if pct == pct else None}
+    raw = fetch_bands(ctx, polygon, scene)           # LR 10 m (voie affichage)
+    bands, sr_method = upscale_bands(raw)            # voie detection (x4)
     anchor = _load_frame_row(engine, site_id, "anchor")
     if anchor is None:
         _save_frame(engine, site_id, "anchor", bands)
@@ -205,8 +262,10 @@ def check_site(engine: Engine | None, site_id: int) -> dict:
     else:
         anchor_idx = _indices(anchor)
     _save_frame(engine, site_id, "prev", bands)
-    result = _persist_observation(engine, site_id, scenes[0], bands, anchor_idx,
-                                  sr_method, _bbox4326(polygon))
+    result = _persist_observation(engine, site_id, scene, bands, anchor_idx,
+                                  sr_method, _bbox4326(polygon), raw)
+    if pct == pct:
+        result["parcel_cloud_pct"] = round(pct, 1)
     return {"site_id": site_id, **result}
 
 

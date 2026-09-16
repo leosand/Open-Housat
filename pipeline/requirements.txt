@@ -12,6 +12,10 @@ pydantic-settings>=2.2
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 httpx>=0.27
-# pip install sen2sr  (optionnel, GPU recommande ; fallback bicubique sinon)
+# Surresolution d'AFFICHAGE servie en ONNX Runtime (CPU, ~15 Mo, sans torch) — voie commercialisable.
+# Display super-resolution served via ONNX Runtime (CPU, ~15 MB, no torch) — the deployable path.
+onnxruntime>=1.18
+# Surresolution de DETECTION optionnelle (SEN2SR, torch) : voir pipeline/requirements-sr.txt
+# (hors image slim par defaut ; fallback bicubique honnete sinon)
 pytest>=8.0
 ruff>=0.5

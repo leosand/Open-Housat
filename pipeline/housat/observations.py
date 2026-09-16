@@ -124,12 +124,30 @@ def milestone_decision(
     return 0, False, growth
 
 
-def image_png_rgb(bands: dict[str, np.ndarray], clip_hi: float = 0.35) -> bytes:
-    """Composite RGB PNG (Pillow) pour vignette dashboard."""
-    from PIL import Image
+def image_png_rgb(
+    bands: dict[str, np.ndarray],
+    clip_hi: float = 0.35,
+    *,
+    stretch: bool = True,
+    lo_pct: float = 2.0,
+    hi_pct: float = 98.0,
+    gamma: float = 0.9,
+    sharpen: bool = True,
+) -> bytes:
+    """Composite RGB PNG (Pillow) pour vignette dashboard — voie VISION.
 
-    rgb = np.stack([bands["red"], bands["green"], bands["blue"]], axis=-1)
+    Par defaut (stretch=True) : etirement robuste par percentiles 2-98 + gamma + leger
+    rehaussement (cf. `housat.imagery.rendering`), ce qui corrige le rendu plat/sombre
+    du clip dur historique. N'affecte AUCUN indice de detection (les indices sont
+    calcules sur les bandes brutes, jamais sur ce PNG).
+
+    Compat. : `stretch=False` restaure l'ancien comportement (`rgb / clip_hi`, clip dur) —
+    conserve pour comparaison A/B et non-regression.
+    """
+    from housat.imagery import rendering
+
+    rgb = np.stack([bands["red"], bands["green"], bands["blue"]], axis=-1).astype(np.float32)
+    if stretch:
+        return rendering.display_png(rgb, lo_pct=lo_pct, hi_pct=hi_pct, gamma=gamma, sharpen=sharpen)
     rgb8 = (np.clip(rgb / clip_hi, 0, 1) * 255).astype(np.uint8)
-    buf = io.BytesIO()
-    Image.fromarray(rgb8).save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    return rendering.encode_png(rgb8, sharpen=sharpen)

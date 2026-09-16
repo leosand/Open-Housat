@@ -1,6 +1,6 @@
 :root { font-family: system-ui, -apple-system, sans-serif; color: #1a1a1a; }
 body { margin: 0; background: #f6f7f9; }
-main { max-width: 880px; margin: 0 auto; padding: 2rem 1rem; }
+main { max-width: 1160px; margin: 0 auto; padding: 2rem 1rem; }
 h1 { font-size: 1.6rem; }
 .card { background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 1.25rem; margin: 1rem 0; }
 label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; margin-bottom: 0.75rem; }
@@ -18,19 +18,54 @@ button.link { background: none; color: #2563eb; padding: 0; text-decoration: und
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
 .metrics dt { font-size: 0.8rem; color: #6b7280; }
 .metrics dd { margin: 0; font-size: 1.15rem; font-weight: 600; }
-.obsgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+.obsgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.9rem; }
 .obsgrid figure { margin: 0; }
-.obsgrid img, .noimg { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #e2e5ea; background: #eef1f4; }
-.noimg { display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 0.8rem; }
+/* Taille NATURELLE : une vignette Sentinel-2 d'une parcelle fait ~72 px — l'etirer a 100 %
+   la rend floue et MENT sur le detail disponible. On affiche donc la vraie resolution. */
+.obsgrid img { width: auto; max-width: 100%; max-height: 300px; height: auto; border-radius: 8px;
+               border: 1px solid #e2e5ea; background: #eef1f4; }
+.obsgrid img.zoomable { cursor: zoom-in; }
+.noimg { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; color: #9ca3af;
+         font-size: 0.8rem; border-radius: 8px; border: 1px solid #e2e5ea; background: #eef1f4; }
 .obsgrid figcaption { font-size: 0.78rem; color: #4b5563; margin-top: 0.25rem; }
-/* Carte (MapLibre + OSM) */
-.mapbox { width: 100%; border-radius: 10px; border: 1px solid #e2e5ea; margin: 0.5rem 0; }
-/* Comparateur avant/apres */
-.comparebox { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid #e2e5ea; }
-.cmp { display: block; width: 100%; }
-.imgB { position: absolute; inset: 0; }
-.tag { position: absolute; top: 8px; background: rgba(0,0,0,0.65); color: #fff;
-       padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; pointer-events: none; }
-.tagA { left: 8px; } .tagB { right: 8px; }
-.cmprange { position: absolute; inset: auto 0 8px 0; width: calc(100% - 16px); margin: 0 8px; }
+/* Lightbox : agrandir une observation au clic (l'image de scene est petite nativement) */
+.lightbox { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: flex;
+            align-items: center; justify-content: center; z-index: 1000; padding: 1.5rem; }
+/* Lightbox : agrandir une observation au clic. `object-fit: contain` dans une boite fixe
+   echelle l'image NATIVE (~72 px pour une parcelle de 178 m a 2,5 m) vers le haut comme vers le
+   bas sans jamais la deformer ; `pixelated` garde l'agrandissement honnete (pas de faux detail). */
+.lightbox img { width: 82vw; height: 82vh; object-fit: contain; image-rendering: pixelated; }
+.lightbox-close { position: absolute; top: 1rem; right: 1rem; background: #fff; color: #111; }
+.lightbox-cap { position: absolute; bottom: 0.6rem; left: 50%; transform: translateX(-50%);
+                color: #fff; font-size: 0.85rem; text-align: center; margin: 0; }
+/* Vue reelle HR : avant/apres date, sub-metrique (la maison est visible) */
+.hcompare { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.hcompare figure { margin: 0; }
+.hcompare img { width: 100%; height: auto; border-radius: 8px; border: 1px solid #e2e5ea; cursor: zoom-in; }
+.hcompare figcaption { font-size: 0.78rem; color: #4b5563; margin-top: 0.25rem; }
+.centerable { cursor: crosshair; }
+.wbmap { width: 100%; height: 420px; border-radius: 10px; border: 1px solid #e2e5ea; }
+label.inline { flex-direction: row; align-items: center; gap: 0.4rem; margin-bottom: 0; }
+/* Cadence des passages Sentinel-2 : pastilles date · nuages % */
+.ovp { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; padding: 0; margin: 0.4rem 0 0; }
+.ovp li { font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 999px;
+          border: 1px solid #c9ced6; background: #f3f4f6; color: #374151; }
+.ovp li.ok { background: #dcfce7; border-color: #86efac; color: #14532d; }
+.ovp li.mid { background: #fef9c3; border-color: #fde047; color: #713f12; }
+.ovp li.ko { background: #f3f4f6; color: #9ca3af; }
+/* Etat du chantier en langage clair : repond au CLIENT (« ou en est ma maison ? ») */
+.status { background: #f8fafc; border: 1px solid #e2e5ea; border-radius: 10px;
+          padding: 0.85rem 1rem; margin: 0.75rem 0; }
+.status h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.status p { margin: 0.35rem 0 0; }
+.steps { display: flex; flex-wrap: wrap; gap: 0.45rem 1.1rem; list-style: none; padding: 0; margin: 0 0 0.5rem; }
+.steps li { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: #9ca3af; }
+.steps .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; border: 2px solid #cbd5e1; }
+.steps li.done { color: #166534; }
+.steps li.done .dot { background: #16a34a; border-color: #16a34a; }
+.steps li.current { color: #1d4ed8; font-weight: 600; }
+.steps li.current .dot { background: #2563eb; border-color: #2563eb; box-shadow: 0 0 0 3px #dbeafe; }
+.tech { margin: 0.4rem 0 0; }
+.tech summary { cursor: pointer; font-size: 0.85rem; color: #6b7280; }
+
 @media (prefers-reduced-motion: no-preference) { .card { transition: box-shadow 0.2s; } }

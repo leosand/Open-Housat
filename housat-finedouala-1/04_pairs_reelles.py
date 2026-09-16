@@ -57,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--patch", type=int, default=64, help="cote du patch LR (HR = 4x)")
     p.add_argument("--max-patches", type=int, default=200)
     p.add_argument("--min-std", type=float, default=0.02, help="ignore les patchs quasi uniformes")
+    p.add_argument("--hr-source", choices=("wayback", "nicfi"), default="wayback",
+                   help="HR : archive Esri (datee mais composite) ou MOSAIQUES MENSUELLES NICFI "
+                        "(4,77 m, licence propre, cle PLANET_API_KEY requise) — le levier de fond "
+                        "contre le decalage de date mesure par 05_calibrer_alignement.py")
     p.add_argument("--out", type=Path, default=ROOT / "housat-finedouala-1" / "data" / "pairs")
     args = p.parse_args(argv)
 
@@ -83,7 +87,21 @@ def main(argv: list[str] | None = None) -> int:
     if hr_date is None:
         print("aucune imagerie d'archive datee <= scene : paire impossible")
         return 1
-    hr_png = fetch_wayback(args.bbox, hr_date, size=4 * max(h, w))
+    if args.hr_source == "nicfi":
+        # Mosaique MENSUELLE : la date HR colle au mois de la scene, ce qui supprime le decalage
+        # temporel que 05_calibrer_alignement.py a designe comme le facteur limitant.
+        from housat.config import settings
+        from housat.imagery.basemap import fetch_planet_nicfi
+        if not settings.planet_api_key:
+            print("NICFI indisponible : PLANET_API_KEY absente (.env). Licence NICFI : usage "
+                  "recherche/non-commercial, attribution obligatoire. Repli : --hr-source wayback.")
+            return 1
+        hr_png = fetch_planet_nicfi(args.bbox, size=4 * max(h, w),
+                                    mosaic=settings.nicfi_mosaic or None,
+                                    api_key=settings.planet_api_key)
+        hr_date = f"NICFI {sc.acquired:%Y-%m}"
+    else:
+        hr_png = fetch_wayback(args.bbox, hr_date, size=4 * max(h, w))
     hr = np.asarray(Image.open(io.BytesIO(hr_png)).convert("RGB"), dtype=np.uint8)
     # `fetch_wayback` renvoie un carre : on recadre au ratio EXACT 4x de la grille LR, sinon la
     # correspondance bloc HR <-> pixel LR derive sur l'axe le plus court (448/111 = 4,036 !).

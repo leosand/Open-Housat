@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
           f"archive HR {hr_date} | {hr.shape[0]}x{hr.shape[1]} px")
 
     args.out.mkdir(parents=True, exist_ok=True)
-    lrs, hrs, corrs, fens = [], [], [], []
+    lrs, hrs, corrs, fens, shifts = [], [], [], [], []
     for r0, r1, c0, c1 in tiles((h, w), size=args.patch):
         if len(lrs) >= args.max_patches:
             break
@@ -103,13 +103,33 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if float(np.std(lr_p)) < args.min_std:
             continue
-        # Alignement : HR agrege a 10 m (moyenne de blocs 4x4) vs LR reel, luminance moyenne.
+        # Alignement STRUCTUREL : la luminance entre capteurs est un mauvais indicateur (radiometries
+        # differentes) -> on correle les MAGNITUDES DE GRADIENT (contours), et on cherche le
+        # decalage (dy, dx) qui les maximise : un decalage nul + correlation correcte = paire alignee.
         k = hr_p.shape[0] // lr_p.shape[0]
         agg = hr_p[: lr_p.shape[0] * k, : lr_p.shape[1] * k].reshape(
             lr_p.shape[0], k, lr_p.shape[1], k, 3).mean((1, 3))
-        a = agg.mean(-1).ravel()
-        bb = (lr_p.mean(-1) * 255.0).ravel()
-        corr = float(np.corrcoef(a, bb)[0, 1]) if a.std() > 1 and bb.std() > 1 else float("nan")
+
+        def contours(img: np.ndarray) -> np.ndarray:
+            g = np.asarray(img, dtype=np.float32).mean(-1)
+            gx, gy = np.diff(g, axis=1), np.diff(g, axis=0)
+            m = np.zeros_like(g)
+            m[:-1, :-1] = 0.5 * (np.abs(gx[:-1, :]) + np.abs(gy[:, :-1]))
+            return m
+
+        ea, eb = contours(agg), contours(lr_p * 255.0)
+        r = 3
+        corr, dy, dx = float("nan"), 0, 0
+        for sy in range(-r, r + 1):
+            for sx in range(-r, r + 1):
+                a = np.roll(np.roll(ea, sy, 0), sx, 1)[r:-r, r:-r].ravel()
+                bb = eb[r:-r, r:-r].ravel()
+                if a.std() < 1e-6 or bb.std() < 1e-6:
+                    continue
+                c = float(np.corrcoef(a, bb)[0, 1])
+                if c == c and (corr != corr or c > corr):
+                    corr, dy, dx = c, sy, sx
+        shifts.append((dy, dx))
         lrs.append(to_u8(lr_p))
         hrs.append(hr_p)
         corrs.append(corr)
@@ -119,18 +139,23 @@ def main(argv: list[str] | None = None) -> int:
         print("aucun patch exploitable (emprise trop petite pour --patch ?)")
         return 1
     med = float(np.nanmedian(corrs))
+    dec = np.median(np.array(shifts), axis=0) if shifts else [0, 0]
     npz = args.out / f"pairs_{sc.acquired}.npz"
     np.savez_compressed(npz, lr=np.stack(lrs), hr=np.stack(hrs))
     mf = args.out / f"manifest_{sc.acquired}.json"
     mf.write_text(json.dumps({"scene_lr": sc.acquired.isoformat(), "archive_hr": hr_date,
                               "bbox": args.bbox, "patch_lr": args.patch,
-                              "n_patches": len(lrs), "corr_mediane_hr_vs_lr": round(med, 3),
-                              "alignement": "OK" if med >= 0.3 else "DOUTEUX (verifier)",
+                              "n_patches": len(lrs),
+                              "corr_contours_mediane": round(med, 3),
+                              "decalage_median_dy_dx": [int(dec[0]), int(dec[1])],
+                              "alignement": "OK" if (med >= 0.3 and max(abs(dec[0]), abs(dec[1])) <= 2)
+                                            else "DOUTEUX (verifier)",
+                              "methode": "correlation de gradients + recherche de decalage -3..+3 px",
                               "limite": "mosaique d'archive != acquisition du meme jour",
                               "fenetres": fens}, indent=2), encoding="utf-8")
     print(f"{len(lrs)} paires -> {npz.name} ({npz.stat().st_size / 1e6:.2f} Mo) | "
-          f"corr HR/LR mediane {med:.3f} -> "
-          f"{'ALIGNE' if med >= 0.3 else 'DOUTEUX : a verifier avant tout entrainement'}")
+          f"corr contours mediane {med:.3f} | decalage median {int(dec[0])},{int(dec[1])} px -> "
+          f"{'ALIGNE' if (med >= 0.3 and max(abs(dec[0]), abs(dec[1])) <= 2) else 'DOUTEUX : a verifier avant tout entrainement'}")
     return 0
 
 

@@ -83,19 +83,23 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
       - run: pip install -r pipeline/requirements.txt
-      - name: Schema PostgreSQL (table reports) — le chemin non couvert par SQLite
+      - name: Schema PostgreSQL (tables du produit puis table reports)
+        env:
+          PYTHONPATH: pipeline:apps/api
         run: |
           python -c "
-          from sqlalchemy import create_engine, text
           import os
+          from sqlalchemy import create_engine, text
+          from sqlmodel import SQLModel
+          import models  # noqa: F401 — enregistre les tables du produit (sites, observations…)
           from housat.reporting import ensure_report_table
           e = create_engine(os.environ['DATABASE_URL'])
+          SQLModel.metadata.create_all(e)   # ce que fait l'API au demarrage
           ensure_report_table(e)
           with e.begin() as c:
               c.execute(text('SELECT count(*) FROM reports'))
-          print('table reports OK sur PostgreSQL')
+          print('schema PostgreSQL OK (tables produit + reports)')
           "
-        working-directory: pipeline
       - name: Worker --once (base vide, demarrage + connexion + sortie propre)
         run: python -m housat.worker --once
         working-directory: pipeline

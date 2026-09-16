@@ -279,6 +279,11 @@ def ensure_report_table(engine: Engine) -> None:
     """Cree la table reports si absente (le worker tourne sans l'API en CI cron).
     Le DDL suit le modele SQLModel (TIMESTAMP sous PostgreSQL) pour eviter toute derive
     de schema entre le chemin worker et le chemin API.
+
+    PRECONDITION : le schema du produit existe deja (l'API le cree au demarrage) — `reports` porte une
+    cle etrangere vers `sites(id)` et un `CREATE TABLE` echoue sur une base vierge
+    (`psycopg2.errors.UndefinedTable: relation "sites" does not exist`, constate en CI le 2026-09-16).
+    Un deploiement qui n'executerait QUE le worker doit donc initialiser le schema au prealable.
     """
     lite = engine.dialect.name == "sqlite"
     pk = "INTEGER PRIMARY KEY AUTOINCREMENT" if lite else "SERIAL PRIMARY KEY"

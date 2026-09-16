@@ -56,7 +56,27 @@ zone tenue à l'écart, carte d'incertitude si le modèle le permet, taille de c
 ## 4. État
 
 - [x] Hypothèses vérifiées et arbitrées (ce fichier)
-- [x] Budget disque calculé, `.gitignore` durci
-- [ ] `01_dataset_douala.py` (scènes qualifiées SCL + masque OSM + tuilage)
-- [ ] `02_finetune.py` (réutilise `benchmark_finetune`) · `03_eval.py` (PSNR/SSIM/SAM/NDVI/eau)
-- [ ] Export ONNX via `export_onnx.py` · comparateur SR côté web (branche dédiée, pas `main`)
+- [x] Budget disque calculé, `.gitignore` durci (aucune donnée versionnée — vérifié)
+- [x] `01_dataset_douala.py` — qualifié **par parcelle (SCL)**, exécuté (2024-12-01 retenue : 12 % parcelle / 9 % tuile)
+- [x] `02_finetune.py` — AMP + accumulation + meilleur checkpoint, **exécuté sur GPU** (pic VRAM 0,09 Go, ckpt 3,57 Mo)
+- [x] `03_eval.py` — exécuté : **SAM 0,45° OK** · **NDVI écart 35 % → échec** (une SR ×4 déplace le NDVI : les indices de la voie SR ne sont **pas** comparables à ceux du natif) · eau **non concluant** (0 pixel) · 3 mensonges de métrique corrigés
+- [x] `04_pairs_reelles.py` — paires LR↔HR réelles + contrôle d'**alignement structurel** (contours + décalage)
+
+### Mesure d'alignement sur trois saisons sèches (Akwa, 1 km, patchs 64 px)
+
+| Scène LR | Archive HR | Écart | Corr. contours | Décalage |
+|---|---|---|---|---|
+| 2017-11-03 (tuile 49 %) | 2017-10-25 | 9 j | **0,192** | 0,0 px |
+| 2022-11-07 (tuile 41 %) | 2022-11-02 | **5 j** | **0,227** | 0,0 px |
+| 2024-12-11 (tuile 60 %) | 2024-11-18 | 23 j | **0,114** | 0,0 px |
+
+**Enseignement** : la géométrie n'est **jamais** décalée (0,0 px partout — le mapping ×4 et la projection
+sont justes) ; c'est la **proximité temporelle** qui gouverne la corrélation (5 j > 9 j > 23 j).
+Le levier n'est donc pas la géométrie mais **la date** : scène peu nuageuse + archive au plus près
+(piste de fond : mosaïques **NICFI** mensuelles, module `planet_nicfi` déjà présent).
+
+**Réserve assumée** : mon seuil de 0,3 n'est **pas calibré** (aucun contrôle positif mesuré) — il
+marque « DOUTEUX » là où le plafond cross-capteur réel est inconnu. À calibrer avant toute conclusion.
+
+- [ ] Calibrer le seuil d'alignement (contrôle positif/négatif) puis brancher `02 --pairs real`
+- [ ] Export ONNX via `export_onnx.py` · comparateur avant/après autour de la sortie SR (branche, pas `main`)

@@ -57,6 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--patch", type=int, default=64, help="cote du patch LR (HR = 4x)")
     p.add_argument("--max-patches", type=int, default=200)
     p.add_argument("--min-std", type=float, default=0.02, help="ignore les patchs quasi uniformes")
+    p.add_argument("--hr-date", choices=("nearest", "before"), default="nearest",
+                   help="nearest = release d'archive la plus PROCHE de la scene, dans les deux sens "
+                        "(attaque l'ecart de date mesure par 05) ; before = ancien comportement")
     p.add_argument("--hr-source", choices=("wayback", "nicfi"), default="wayback",
                    help="HR : archive Esri (datee mais composite) ou MOSAIQUES MENSUELLES NICFI "
                         "(4,77 m, licence propre, cle PLANET_API_KEY requise) — le levier de fond "
@@ -83,7 +86,18 @@ def main(argv: list[str] | None = None) -> int:
     lr = fetch_bands(ctx, poly, sc)
     lr_rgb = np.stack([lr["red"], lr["green"], lr["blue"]], axis=-1)
     h, w = lr["red"].shape
-    hr_date = latest_date_at_or_before(args.bbox, sc.acquired.isoformat())
+    from housat.imagery.wayback import available_dates
+    # Archive la plus PROCHE DE LA DATE DE LA SCENE, dans les deux sens : `latest_date_at_or_before`
+    # ne cherche qu'en arriere et laissait des ecarts de 23 jours la ou une release posterieure
+    # pouvait coller de quelques jours. Mesure de 05 : c'est l'ecart de date qui gouverne la
+    # correlation de contours (5-9 j -> 0,22-0,24 ; 23 j -> 0,10). Aucune habilitation requise.
+    dates = [d for d in available_dates(args.bbox) if d] if args.hr_date == "nearest" else []
+    if dates:
+        from datetime import date as _d
+        cible = _d.fromisoformat(sc.acquired.isoformat())
+        hr_date = min(dates, key=lambda s: abs((_d.fromisoformat(s) - cible).days))
+    else:
+        hr_date = latest_date_at_or_before(args.bbox, sc.acquired.isoformat())
     if hr_date is None:
         print("aucune imagerie d'archive datee <= scene : paire impossible")
         return 1

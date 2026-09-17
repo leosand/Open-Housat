@@ -62,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{'paire':16s} " + " ".join(f"d={d:<5d}" for d in DELTAS) + " chute  verdict")
     for f in fichiers:
         z = np.load(f)
+        mf = f.with_name(f.name.replace("pairs_", "manifest_").replace(".npz", ".json"))
+        arch = json.loads(mf.read_text(encoding="utf-8")).get("archive_hr") if mf.exists() else "?"
+        print(f"  [{f.stem} | archive HR lue : {arch}]")   # identite de l'ENTREE de la mesure : sans
+        # elle, deux chiffres ne sont pas comparables (c'est exactement le faux desaccord 05 vs 02)
         lr, hr = z["lr"], z["hr"]
         courbes = []
         for d in DELTAS:

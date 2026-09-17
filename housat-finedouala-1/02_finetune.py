@@ -70,16 +70,26 @@ def paires_reelles(dossier: Path, *, gap: float = 0.02):
         c0, c1, c2 = [], [], []
         for i in range(lr.shape[0]):
             g = lr[i] * 255.0
-            a = _contours(hr[i].reshape(64, 4, 64, 4, 3).mean((1, 3)))
+            hr_agg = hr[i].reshape(64, 4, 64, 4, 3).mean((1, 3))
+            a = _contours(hr_agg)
             c0.append(np.corrcoef(a.ravel(), _contours(g).ravel())[0, 1])
             for d, acc in ((1, c1), (2, c2)):     # d=1 compte : en 05, la paire « aveugle » avait
-                gs = np.roll(np.roll(g, d, 0), d, 1)[d:-d, d:-d]      # corr(d=1) > corr(d=0)
-                aa = a[d:-d, d:-d]
-                acc.append(np.corrcoef(aa.ravel(), _contours(gs).ravel())[0, 1])
+                # ORDRE DES OPERATIONS = celui de 05 : on CROPPE les images puis on calcule les
+                # contours. Faire l'inverse (contours puis crop, version precedente) decale le
+                # support du gradient d'un pixel et produisait un faux desaccord 0,114 vs 0,068 a d=1
+                # -- identique a d=0, different des que d>0 : la signature exacte d'un decalage de support.
+                # On decale UNIQUEMENT l'image sous test (le LR) : decaler aussi la reference
+                # mesurerait leur coherence mutuelle au lieu de la fidelite de l'alignement
+                # (constate : d=1 montait a 0,231 au lieu de 0,119).
+                gs = np.roll(np.roll(g, d, 0), d, 1)[d:-d, d:-d]
+                hs = hr_agg[d:-d, d:-d]
+                acc.append(np.corrcoef(_contours(hs).ravel(), _contours(gs).ravel())[0, 1])
         m0, m1, m2 = float(np.mean(c0)), float(np.mean(c1)), float(np.mean(c2))
         # REGLE CALIBREE EN 05 : corr(d=0) doit etre le MAXIMUM et la chute >= gap.
         ok = m0 >= max(m1, m2) and (m0 - max(m1, m2)) >= gap
-        print(f"  {f.stem} : corr d=0 {m0:.3f} | d=1 {m1:.3f} | d=2 {m2:.3f} -> "
+        mf = f.with_name(f.name.replace("pairs_", "manifest_").replace(".npz", ".json"))
+        arch = json.loads(mf.read_text(encoding="utf-8")).get("archive_hr") if mf.exists() else "?"
+        print(f"  {f.stem} [archive HR lue : {arch}] : corr d=0 {m0:.3f} | d=1 {m1:.3f} | d=2 {m2:.3f} -> "
               f"{'RETENUE' if ok else 'ECARTEE (metrique non discriminante)'}")
         if ok:
             retenues.extend((lr[i], hr[i]) for i in range(lr.shape[0]))   # cible = HR 256x256, pas

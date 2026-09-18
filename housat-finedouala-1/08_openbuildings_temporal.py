@@ -128,6 +128,22 @@ def resolve_openbuildings_tile_url(bbox: tuple[float, float, float, float], year
     )
 
 
+# Sonde de telechargement : on enregistre le CODE HTTP REELLEMENT recu (pas l'intention). Sans cela,
+# le rapport pouvait annoncer la source Google alors que le telechargement avait echoue en 404.
+DOWNLOAD_PROBE: dict[str, object] = {"url": None, "http_status": None}
+
+
+def probe_http_status(url: str) -> object:
+    """HEAD sur l'URL : code HTTP reel, ou le nom de l'exception. Aucun mensonge possible."""
+    try:
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": "Housat-EO-Downloader/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return int(resp.status)
+    except Exception as exc:  # noqa: BLE001 — on veut le code, pas une trace
+        return getattr(exc, "code", type(exc).__name__)
+
+
 def download_tile_with_backoff(url: str, dest_path: Path, max_retries: int = 3) -> bool:
     """Télécharge une ressource GeoTIFF avec gestion des reprises et détection d'erreur."""
     if dest_path.exists() and dest_path.stat().st_size > 1024:
@@ -148,9 +164,11 @@ def download_tile_with_backoff(url: str, dest_path: Path, max_retries: int = 3) 
                     out_file.write(chunk)
             
             temp_path.replace(dest_path)
+            DOWNLOAD_PROBE.update(http_status=200, url=url)
             logger.info("Téléchargement réussi : %s (%.2f Mo)", dest_path.name, dest_path.stat().st_size / 1e6)
             return True
         except Exception as err:
+            DOWNLOAD_PROBE.update(http_status=getattr(err, "code", type(err).__name__), url=url)
             logger.warning("Échec tentative %d/%d pour %s : %s", attempt, max_retries, url, err)
             if temp_path.exists():
                 temp_path.unlink()
@@ -317,10 +335,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     logger.info("Tenseurs de vérité terrain persistés : %s (%.2f Mo)", npz_out.name, npz_out.stat().st_size / 1e6)
 
+    # PROVENANCE REELLE : on n'ecrit « Google » que si le code HTTP vaut 200. Sinon on etiquete le
+    # repli local comme tel — un CONFORME emis par un repli serait un mensonge de provenance.
+    if DOWNLOAD_PROBE["http_status"] is None:      # cache local : on sonde quand meme l'URL
+        DOWNLOAD_PROBE.update(http_status=probe_http_status(meta.download_url),
+                              url=meta.download_url)
+    remote_ok = DOWNLOAD_PROBE["http_status"] == 200
+    if remote_ok:
+        source, provenance = "Google Open Buildings 2.5D Temporal V1", "remote_download"
+    else:
+        source, provenance = ("calibrage local vectoriel OSM ODbL (repli)", "local_fallback")
+        logger.warning("PROVENANCE : source Google NON utilisee (HTTP %s) — valeurs issues du repli "
+                       "local ; le rapport le declare explicitement.",
+                       DOWNLOAD_PROBE["http_status"])
     report = {
         "timestamp": date.today().isoformat(),
-        "source": "Google Open Buildings 2.5D Temporal V1 (Sentinel-2 derived)",
+        "source": source,
+        "provenance": provenance,
         "dataset_license": "CC-BY-4.0 / Open Data",
+        "download": {
+            "url": DOWNLOAD_PROBE["url"] or meta.download_url,
+            "http_status": DOWNLOAD_PROBE["http_status"],
+            "verifie_par": "HEAD/GET reel (aucune URL supposee)",
+        },
         "spatial_coverage": {
             "bbox": args.bbox,
             "target_grid": list(target_shape),
@@ -329,7 +366,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "metrics": asdict(metrics),
         "validation_against_osm": {
             "osm_mask_present": osm_mask is not None,
-            "agreement_status": "CONFORME" if osm_mask is not None else "NON_APPLICABLE",
+            "agreement_status": (
+                "CONFORME" if (remote_ok and osm_mask is not None)
+                else "NON_VERIFIABLE (donner repli local, source Google indisponible)" if not remote_ok
+                else "NON_APPLICABLE"),
+            "regle": "CONFORME exige la source officielle ET un accord mesure avec OSM",
         },
         "artifact_file": npz_out.name,
     }

@@ -25,6 +25,12 @@ services:
     depends_on:
       db: {condition: service_healthy}
     ports: ["8000:8000"]
+    # V&V exécutable EN CONTENEUR : le dossier racine `tests/` n'était pas monté, donc la suite
+    # `tests/test_08_openbuildings_temporal.py` était inatteignable depuis l'API (mesuré le
+    # 2026-09-18 : « file or directory not found », 0/12 tests collectés).
+    volumes:
+      - ../tests:/srv/tests:ro
+      - ../housat-finedouala-1:/srv/housat-finedouala-1
     restart: unless-stopped
 
   worker:

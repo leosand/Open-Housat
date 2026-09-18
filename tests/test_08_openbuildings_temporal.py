@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,12 @@ spec = importlib.util.spec_from_file_location("openbuildings_temporal", MODULE_P
 if spec is None or spec.loader is None:
     raise ImportError(f"Impossible de charger le module à l'emplacement : {MODULE_PATH}")
 mod = importlib.util.module_from_spec(spec)
+# VOIE B retenue (vs renommage du script en module) : le fichier `08_*.py` n'est pas importable
+# comme module (il commence par un chiffre) et son renommage aurait casse le point d'entree CLI
+# documente dans le plan V&V. Il faut enregistrer le module dans `sys.modules` AVANT `exec_module`,
+# sinon `dataclasses`/`typing.get_type_hints` ne resolvent pas les annotations et le chargement leve
+# `AttributeError: 'NoneType' object has no attribute '__dict__'` (0 test collecte sur 8).
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 parse_bbox = mod.parse_bbox

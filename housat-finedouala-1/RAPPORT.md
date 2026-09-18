@@ -103,6 +103,9 @@ le critère décisionnaire est **le SCL par parcelle** (ADR 0010), pas la tuile.
 | **GitGuardian rouge** malgré un correctif | le scan lit **tout le diff de la PR**, pas le dernier commit | réécrire la branche (`reset --soft` + `force-with-lease`) : aucun commit ne doit contenir le secret |
 | Job CI planifié rouge **tous les jours** | `secrets.DATABASE_URL` **inexistant** → URL vide → `Could not parse SQLAlchemy URL` | base de **service PostGIS** (`POSTGRES_HOST_AUTH_METHOD=trust`, aucun mot de passe) + schéma produit créé avant `reports` |
 | Métriques SR qui se contredisent selon le script | trois implémentations du même indicateur | **une seule définition** de référence, et l'identité d'entrée imprimée avec le chiffre |
+| Collecte PyTest cassée (`08_openbuildings_temporal.py`) | le script commence par un **chiffre** → non importable ; le test utilisait `spec_from_file_location` **sans enregistrer le module dans `sys.modules`** → `dataclasses`/`typing` ne résolvent pas les annotations → `AttributeError: 'NoneType' object has no attribute '__dict__'`, **0 test collecté sur 12** | **Voie B** : `sys.modules[spec.name] = mod` **avant** `exec_module` (voie A — renommer en module — aurait cassé le point d'entrée CLI du plan V&V) → **12/12 verts** |
+| URL Open Buildings **supposée** → HTTP 404, et `"source": "Google …"` écrit quand même | chemin de tuiles jamais vérifié + repli local étiqueté comme la source officielle | **sonde HTTP réelle** (`HEAD`/`GET`, code enregistré dans `download.http_status`) + **provenance honnête** (`remote_download` / `local_fallback`) + `agreement_status` forcé à `NON_VERIFIABLE (donner repli local, source Google indisponible)` |
+| Suite V&V inatteignable en conteneur | le service `api` ne montait que `/srv/{api,apps,pipeline}` — **aucune section `volumes`** | ajout des montages `../tests:/srv/tests:ro` et `../housat-finedouala-1:/srv/housat-finedouala-1` → **12/12 en conteneur** |
 
 ## 6. Connaissances capturées (fiches vault, `30-knowledge/`)
 
@@ -122,9 +125,10 @@ le critère décisionnaire est **le SCL par parcelle** (ADR 0010), pas la tuile.
 4. **Habilitation NICFI** (administratif) : seule voie vers des paires **Douala datées** de qualité.
 5. **Segmentation bâti** (objectif 2) : U-Net sur le masque OSM — supervision déjà **vérifiée alignée**.
 6. **Tête dalle/toit** (objectif 3) : trajectoire temporelle + arbitrage HR datée.
-7. **Intégration produit** : déposer le meilleur `.onnx` dans `pipeline/housat/models/` (voie affichage) ;
+7. **Open Buildings 2.5D** : l'URL publique testée renvoie **404** — vérifier la vraie voie d'accès (GeoTIFF partitionnés, dépôt `saiga143/google-2.5d-bulk-download`) ou acter que le jeu temporel exige **Earth Engine** (authentification) ; en attendant, le script est un **repli local explicitement étiqueté**, jamais une validation de la source distante.
+8. **Intégration produit** : déposer le meilleur `.onnx` dans `pipeline/housat/models/` (voie affichage) ;
    l'évaluation `03` peut devenir un **contrôle de non-régression en CI**.
-8. **Comparateur** : alimenter `06` avec le modèle ONNX (aujourd'hui il affiche le bicubique comme étalon).
+9. **Comparateur** : alimenter `06` avec le modèle ONNX (aujourd'hui il affiche le bicubique comme étalon).
 
 ## 8. Reproductibilité (commandes exactes)
 

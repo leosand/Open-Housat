@@ -1,0 +1,18 @@
+{
+  "device": "cuda",
+  "city": "douala",
+  "paires_train": 78,
+  "steps": 1000,
+  "batch": 4,
+  "accum": 1,
+  "hr_size": 512,
+  "best": {
+    "psnr": 14.503291000433457,
+    "ssim": 0.05669277906417847,
+    "step": 500
+  },
+  "ckpt": "E:\\Mes apps\\Housat\\housat-finedouala-1\\checkpoints\\best.pt",
+  "ckpt_mo": 3.57,
+  "secondes": 23.1,
+  "pic_vram_go": 0.16
+}

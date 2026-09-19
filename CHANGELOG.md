@@ -4,8 +4,7 @@ Tous les changements notables de Housat sont documentes ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) · Versionnage : [SemVer](https://semver.org/lang/fr/).
 Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
 
-## [Unreleased]
-- **Jalons de chantier : le classifieur CONÇU est enfin branché** — `detection/milestones.py::classify`
+## [v0.1.0] - 2026-09-19
   existait, était testé, documenté… et **n'était appelé que par les tests**. Le worker utilisait un
   second arbre de seuils (`observations.py::milestone_decision`, supprimé) construit sur la seule
   **ampleur** du changement. Trois défauts mesurés en découlaient :

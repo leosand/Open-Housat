@@ -1,0 +1,48 @@
+{
+  "deltas_px": [
+    0,
+    1,
+    2,
+    4,
+    8
+  ],
+  "rapport": {
+    "pairs_2017-11-03.npz": {
+      "corr_par_delta": {
+        "0": 0.219,
+        "1": 0.119,
+        "2": 0.071,
+        "4": 0.083,
+        "8": 0.069
+      },
+      "chute_max": 0.1,
+      "metrique_sensible": true,
+      "seuil_calibre": 0.131
+    },
+    "pairs_2022-11-07.npz": {
+      "corr_par_delta": {
+        "0": 0.235,
+        "1": 0.145,
+        "2": 0.07,
+        "4": 0.054,
+        "8": 0.05
+      },
+      "chute_max": 0.091,
+      "metrique_sensible": true,
+      "seuil_calibre": 0.141
+    },
+    "pairs_2024-12-11.npz": {
+      "corr_par_delta": {
+        "0": 0.105,
+        "1": 0.114,
+        "2": 0.068,
+        "4": 0.06,
+        "8": 0.088
+      },
+      "chute_max": -0.009,
+      "metrique_sensible": false,
+      "seuil_calibre": 0.063
+    }
+  },
+  "regle": "la metrique discrimine si corr(d=0) est le maximum ET que la chute depasse 0,02 ; le seuil d'alignement devient 60 % de corr(d=0), mesure par paire au lieu d'une constante inventee"
+}

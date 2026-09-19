@@ -83,6 +83,17 @@ Règle de lecture des jalons (`milestone_decision`) :
    lecture en ligne ; les rapports livrés utilisent ReportLab + les images Sentinel-2 (Copernicus) et
    OSM (ODbL) selon attribution. Toute embarquement d'imagerie Esri dans un livrable client est **à
    valider juridiquement** (dette ouverte).
+6. **Aucun fournisseur authentifié ne doit être réintroduit sans habilitation écrite.** Mesuré le
+   2026-09-19 : la seconde voie de fond (mosaïques mensuelles redistribuables) exigeait une clé, le
+   programme qui la finançait est **clos depuis 2025**, l'API renvoyait **0 mosaïque** et la clé a été
+   **exposée puis révoquée**. Tout le chemin a donc été **supprimé du code** (ADR 0003, amendement
+   2026-09-19). Conséquence à assumer : **il n'existe plus aucune source haute résolution
+   redistribuable** dans le projet — donc **aucun fond HR ne part dans un rapport livré**.
+7. **Un repli ne porte jamais le nom de la source distante.** Leçon du script 08 (Open Buildings) :
+   l'URL supposée renvoyait **404** et le repli local OSM était quand même étiqueté « Google Open
+   Buildings 2.5D Temporal V1 ». Règle : `provenance` (`remote_download` / `local_fallback`),
+   `download.http_status` réel et `agreement_status` mesuré sont écrits dans le JSON ; un repli écrit
+   `NON_VERIFIABLE`, jamais `CONFORME`.
 
 ## 5. Ce que le produit ne prétend PAS faire
 

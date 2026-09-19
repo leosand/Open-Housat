@@ -1,5 +1,5 @@
-"""Tests du fond visuel haute resolution (cascade + tuiles NICFI) — sans reseau.
-Basemap (provider cascade + NICFI tiling) tests — no network (fetcher injecte).
+"""Tests du fond visuel haute resolution (cascade de fournisseurs) — sans reseau.
+Basemap (provider cascade) tests — no network (fetcher injecte).
 """
 
 import io
@@ -73,45 +73,6 @@ def test_fetch_basemap_esri_builds_url_and_returns_provenance() -> None:
     assert img.redistributable is False
     assert img.bbox == (9.70, 4.04, 9.71, 4.05)
     assert img.attribution
-
-
-# --- Fournisseur NICFI ---
-
-def test_nicfi_template_carries_mosaic_and_key() -> None:
-    tmpl = basemap.nicfi_tile_template("planet_medres_x_mosaic", "SECRET123")
-    assert "planet_medres_x_mosaic" in tmpl
-    assert "/gmap/{z}/{x}/{y}.png" in tmpl
-    assert "api_key=SECRET123" in tmpl
-
-
-def test_fetch_planet_nicfi_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    # aucune cle ni mosaique configuree -> erreur explicite (le fournisseur reste optionnel)
-    with pytest.raises(RuntimeError, match="PLANET_API_KEY"):
-        basemap.fetch_planet_nicfi((9.70, 4.04, 9.71, 4.05), api_key="", mosaic="m")
-    with pytest.raises(RuntimeError, match="NICFI_MOSAIC"):
-        basemap.fetch_planet_nicfi((9.70, 4.04, 9.71, 4.05), api_key="k", mosaic="")
-
-
-def test_fetch_planet_nicfi_stitches_tiles() -> None:
-    urls: list[str] = []
-
-    def fetcher(url: str) -> bytes:
-        urls.append(url)
-        return _solid_png((1, 2, 3))
-
-    png = basemap.fetch_planet_nicfi((9.70, 4.04, 9.71, 4.05), 96, mosaic="mosaic_x",
-                                     api_key="KEY", fetcher=fetcher, zoom=15)
-    assert png[:4] == b"\x89PNG"
-    assert Image.open(io.BytesIO(png)).size == (96, 96)
-    assert all("mosaic_x" in u and "api_key=KEY" in u for u in urls)
-
-
-def test_fetch_basemap_planet_nicfi_is_redistributable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(basemap, "fetch_planet_nicfi", lambda *a, **k: _solid_png())
-    img = basemap.fetch_basemap((9.70, 4.04, 9.71, 4.05), provider="planet_nicfi")
-    assert img.provider == "planet_nicfi"
-    assert img.redistributable is True  # NICFI autorise la redistribution sous attribution
-    assert "NICFI" in img.attribution
 
 
 # --- Robustesse de l'API publique ---

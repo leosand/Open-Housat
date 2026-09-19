@@ -4,6 +4,18 @@ Tous les changements notables de Housat sont documentes ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) · Versionnage : [SemVer](https://semver.org/lang/fr/).
 Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
 
+## [Unreleased]
+- **Purge Planet/NICFI (branche `finetune-douala`)** : le programme NICFI est clos depuis 2025 et aucune
+  habilitation n'est possible → toute la voie authentifiée est **retirée du code** : fournisseur
+  `planet_nicfi` + gabarit de tuiles (`pipeline/housat/imagery/basemap.py`), champs de configuration
+  `planet_api_key` / `nicfi_mosaic` (`pipeline/housat/config.py`), `PLANET_API_KEY` / `NICFI_MOSAIC`
+  (`.env.example`), option `--hr-source nicfi` de `housat-finedouala-1/04_pairs_reelles.py` (la source
+  HR unique devient l'**archive datée Esri**, `--hr-date nearest|before`). Le module `basemap` n'importe
+  plus `housat.config`. Tests : `pipeline/tests/test_basemap.py` **16 → 12** (4 tests NICFI supprimés,
+  dont `test_fetch_planet_nicfi_requires_credentials`). Les mentions **datées** (ce CHANGELOG, les ADR,
+  `RAPPORT.md`, `docs/rapports/`) restent : elles documentent une décision historique, pas un chemin
+  de code vivant.
+
 ## [v0.6.0] - 2026-09-19
 > Base : `main` = `6881ac0`. Entrée construite **exclusivement** depuis `git log --oneline 303ab3b..main`.
 > Version **MINOR** (fonctionnalités nouvelles, rétro-compatibles) : le dépôt n'avait **aucun tag**.

@@ -24,3 +24,12 @@ coverage/
 # (mesure du 2026-09-16 : 466 Mo de .tar.gz dans l'historique -> « pre-receive hook declined »).
 .harness/backups/
 .harness/agents/hooks/*.log
+
+# --- Experimentation fine-tuning SR (branche finetune-douala) : les DONNEES NE PARTENT PAS. ---
+# Seuls le code, les configs, le README, les tests et le modele ONNX final (<10 Mo) sont commites.
+housat-finedouala-1/data/
+housat-finedouala-1/**/*.tif
+housat-finedouala-1/**/*.cog
+housat-finedouala-1/**/osm_cache/
+housat-finedouala-1/**/checkpoints/*.pt
+!housat-finedouala-1/models_export/*.onnx

@@ -7,7 +7,7 @@ soit EXACTEMENT l'operateur de degradation du protocole d'evaluation. Entraineme
 utilisent des VILLES DISJOINTES (split geographique) : c'est la garantie anti-fuite.
 
 LIMITE ASSUMEE (a lire avant tout chiffre) : ce ne sont pas de vraies paires multi-capteurs
-(Sentinel-2 reel <-> SPOT/PlanetScope). Le modele apprend a INVERSE l'operateur de degradation
+(Sentinel-2 reel <-> SPOT/VENUS). Le modele apprend a INVERSE l'operateur de degradation
 simule ; les chiffres rangent les methodes entre elles sur ce protocole, ils ne valent pas
 comme performance absolue sur de la vraie Sentinel-2.
 """

@@ -1,0 +1,53 @@
+# .gitattributes — typage binaire des artefacts + LF garanti pour les scripts shell.
+# Prioritaire sur `core.autocrlf` (mesuré : `input`, en local ET en global).
+
+## 1. Artefacts = BINAIRES
+#
+# PREUVE (mesurée le 2026-09-19, dans `git diff --stat` de la branche) : Git a traité comme du TEXTE
+# un modèle de 3 567 642 octets —
+#     housat-finedouala-1/models_export/housat_sr_finedouala_x4.onnx | 14191 ++++++++++++++++++
+# alors qu'il a correctement typé un fichier de MÊME TAILLE dans le même dossier —
+#     housat-finedouala-1/models_export/housat_sr_best_x4.onnx        | Bin 0 -> 3567642 bytes
+# L'heuristique de détection est donc instable d'un binaire à l'autre.
+#
+# État vérifié à cette date : `git hash-object <fichier>` == `git rev-parse HEAD:<fichier>` et
+# `stat -c%s` == `git cat-file -s` (3 567 642 octets des deux côtés) → **aucune corruption**. Le
+# risque est néanmoins réel et SILENCIEUX : `core.autocrlf=input` normalise CRLF -> LF à
+# l'indexation des fichiers qu'il croit textuels, ce qui, sur un binaire, retire des octets `0x0d`
+# et produit un modèle invalide — servi sans erreur jusqu'à l'inférence.
+#
+# Les motifs ci-dessous forcent le typage binaire (`-text -diff`) : plus aucune conversion de fin de
+# ligne possible, et `git diff` cesse de dérouler un binaire en 14 000 lignes de texte.
+
+*.onnx   binary
+*.pt     binary
+*.pth    binary
+*.ckpt   binary
+*.npz    binary
+*.npy    binary
+*.tif    binary
+*.tiff   binary
+*.cog    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.zip    binary
+*.whl    binary
+*.pdf    binary
+
+## 2. Scripts shell = LF, sur tous les postes
+#
+# `scripts/vv_live.sh` est l'équivalent bash du runbook PowerShell : il doit tourner tel quel sous
+# Linux et macOS, où un shebang terminé par un CR (`#!/usr/bin/env bash\r`) échoue. Mesure du
+# 2026-09-19 : le fichier ne contient AUCUN octet `0x0d` (0 CR / 381 LF, contrôle `tr -cd`), donc
+# rien n'était cassé — `eol=lf` est une garantie de NON-RÉGRESSION, pas la réparation d'un bug.
+*.sh     text eol=lf
+
+## 3. Volontairement PAS de règle `*.py text eol=lf`
+#
+# Mesure du 2026-09-19 : les sources Python du dépôt ne contiennent pas de CR non plus (0 CR sur
+# `08_openbuildings_temporal.py` : 434 LF). Elles sont donc saines telles quelles ; déclarer
+# `eol=lf` ne changerait aucun octet mais imposerait une renormalisation à chaque checkout sur les
+# postes configurés autrement. Ajouter cette règle a été jugé inutile (aucun défaut à corriger) et
+# risqué (diff massif si un poste travaille en CRLF). À rouvrir seulement si un CR apparaît
+# réellement dans un blob.

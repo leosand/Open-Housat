@@ -42,9 +42,9 @@ facteur 15-30× : la lisibilité vient d'une SOURCE haute résolution, pas d'un 
   (`provider`, `attribution`, `licence`, `redistributable`). Bbox validée (ordre, bornes).
 - CLI : `python -m housat.imagery.basemap --bbox minLon,minLat,maxLon,maxLat --out f.jpg`.
 - Carte web : fond satellite haute résolution (Esri World Imagery, sans clé) ; Sentinel-2 en overlay.
-- Fournisseurs : `esri_world_imagery` (écran, `redistributable=False`) et `planet_nicfi`
-  (**rapports**, 4,77 m daté, `redistributable=True`) — la clé Planet reste côté serveur
-  (`PLANET_API_KEY`), jamais dans le navigateur.
+- Fournisseur unique : `esri_world_imagery` (écran, `redistributable=False`) — sans clé, aucune
+  identité fournisseur à gérer. La seconde voie (mosaïques mensuelles, clé fournisseur requise) a été
+  **retirée du code** — programme clos 2025, aucune habilitation : cf `housat-finedouala-1/RAPPORT.md` §6.
 - **Garde-fou licence** : un fournisseur `redistributable=False` (ex. Esri) ne doit pas être embarqué
   tel quel dans un rapport livré. Preuve : emprises Douala / Port-au-Prince / périurbain camerounais.
 
@@ -75,7 +75,7 @@ facteur 15-30× : la lisibilité vient d'une SOURCE haute résolution, pas d'un 
 | Unitaires V&V/pivot | pipeline/tests/test_frames.py | frames, ring, divPV, pivot, M2/M0, PNG, match_shape |
 | Unitaires rendu | pipeline/tests/test_rendering.py | étirement percentile 2-98 %, gamma, robustesse NaN/uniforme, contraste > ancien clip |
 | Unitaires SR (deux voies) | pipeline/tests/test_sr_engines.py | sélection de moteur, dégradation SEN2SR, tiling/padding ONNX (session factice), passages |
-| Unitaires fond visuel | pipeline/tests/test_basemap.py | cascade fournisseurs, provenance/licence, validation bbox, géométrie de tuiles + NICFI (fetcher injecté, sans réseau), CLI |
+| Unitaires fond visuel | pipeline/tests/test_basemap.py | cascade fournisseurs, provenance/licence, validation bbox, géométrie de tuiles (fetcher injecté, sans réseau), CLI |
 | Unitaires rapports | pipeline/tests/test_reporting.py | semaines ISO, KPI, rendu PDF (%PDF, > 2 Ko), Latin-1 |
 | API (TestClient) | apps/api/tests/test_api.py | 201/422/404 RFC 7807, compare (422/404) |
 | API rapports (TestClient) | apps/api/tests/test_reports.py | cycle 201/409/GET pdf+ETag, 422 semaines invalides/vides, 404 |

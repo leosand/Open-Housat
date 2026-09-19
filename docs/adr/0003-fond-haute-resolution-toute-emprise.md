@@ -73,3 +73,24 @@ Mise en œuvre :
 | Embarquer Esri/Google tel quel dans le PDF | Violation de licence (redistribution restreinte). |
 | Google/Mapbox uniquement | Exige une clé + facturation → incompatible « zero dollar » au démarrage. |
 | Attendre un fournisseur commercial unique | Bloque ; la cascade permet d'ajouter NICFI/NAIP sans refonte. |
+
+## Amendement (2026-09-19) — le fournisseur `planet_nicfi` est RETIRÉ du code
+
+**Cet ADR reste la trace de la décision du 2026-09-15 ; son corps n'est pas réécrit** (un ADR est daté
+et immuable). Ce qui a changé depuis, mesuré :
+
+- Le programme **NICFI est clos depuis 2025** ; aucune habilitation n'était de toute façon possible sur
+  ce compte (API renvoyant **0 mosaïque**), et la clé a été **exposée puis révoquée manuellement**.
+- Conséquence : `fetch_planet_nicfi`, `nicfi_tile_template`, `_fetch_nicfi`, l'entrée `planet_nicfi` du
+  registre `PROVIDERS`, les réglages `planet_api_key` / `nicfi_mosaic` et l'option `--hr-source nicfi`
+  de `04_pairs_reelles.py` ont été **supprimés du code** (branche `finetune-douala`, entrée
+  `## [Unreleased]` du `CHANGELOG.md`).
+- **Le fournisseur unique est `esri_world_imagery`** (cascade conservée : le registre `PROVIDERS`
+  demeure, donc un futur fournisseur libre s'ajoute sans refonte).
+- La conséquence n° 2 de cet ADR est donc **caduque** : « `planet_nicfi` (`redistributable=True`) est la
+  source retenue pour les rapports » n'est plus vrai — il **n'existe aujourd'hui aucune source
+  haute résolution redistribuable** dans le projet, donc aucun fond HR ne doit être embarqué dans un
+  rapport livré (garde-fou licence inchangé, `redistributable=False` pour Esri).
+- Règle qui en découle, écrite dans `docs/limites-et-honnetete.md` : ne jamais réintroduire un chemin
+  fournisseur authentifié sans **habilitation écrite**, et ne jamais étiqueter un repli comme la
+  source distante (leçon du script 08, cf `docs/rapports/`).

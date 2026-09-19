@@ -10,9 +10,6 @@ Cascade de fournisseurs, chacun portant sa licence et son attribution :
 
 - `esri_world_imagery` : mosaique globale, sans cle, ~0,3-0,6 m en ville. Visualisation libre
   (attribution requise) mais **redistribution restreinte** -> ecran uniquement.
-- `planet_nicfi` : mosaiques PlanetScope 4,77 m **mensuelles et datees**, gratuites pour la
-  ceinture tropicale (NICFI) — **redistribuables sous attribution**. Cle `PLANET_API_KEY`
-  REQUISE, **jamais cote navigateur** (tile service Planet) : usage serveur (rapports/pipeline).
 
 Le fournisseur est injectable (`fetcher`) -> testable sans reseau. La provenance (`provider`,
 `licence`, `redistributable`) accompagne l'image : indispensable avant d'embarquer un fond
@@ -29,8 +26,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
-
-from housat.config import settings
 
 BBox = tuple[float, float, float, float]  # (minLon, minLat, maxLon, maxLat) EPSG:4326
 Fetcher = Callable[[str], bytes]
@@ -49,7 +44,7 @@ class BasemapImage:
     attribution: str
     licence: str
     redistributable: bool
-    date_hint: str | None = None  # date de la mosaique si connue (ex. NICFI mensuel), sinon None
+    date_hint: str | None = None  # date de la source si connue (fond date), sinon None
 
 
 @dataclass(frozen=True)
@@ -151,37 +146,6 @@ def _fetch_esri(bbox: BBox, size: int, fmt: str, fetcher: Fetcher | None) -> byt
     return (fetcher or _http_get)(_esri_url(bbox, size, fmt))
 
 
-def nicfi_tile_template(mosaic: str, api_key: str) -> str:
-    """Gabarit de tuiles de la Mosaique Planet (NICFI). La cle reste cote SERVEUR."""
-    return (
-        f"https://tiles.planet.com/basemaps/v1/planet-tiles/{mosaic}/gmap/{{z}}/{{x}}/{{y}}.png"
-        f"?api_key={api_key}"
-    )
-
-
-def fetch_planet_nicfi(
-    bbox: BBox,
-    size: int = 1024,
-    *,
-    mosaic: str | None = None,
-    api_key: str | None = None,
-    fetcher: Fetcher | None = None,
-    zoom: int | None = None,
-) -> bytes:
-    """Mosaique NICFI (PlanetScope 4,77 m, mensuelle) assemblee pour `bbox` — serveur uniquement."""
-    mosaic = mosaic or settings.nicfi_mosaic
-    key = settings.planet_api_key if api_key is None else api_key
-    if not key:
-        raise RuntimeError("PLANET_API_KEY requis pour le fournisseur planet_nicfi")
-    if not mosaic:
-        raise RuntimeError("NICFI_MOSAIC requis (ex. planet_medres_normalized_analytic_2023-06_mosaic)")
-    return stitch_xyz(bbox, size, nicfi_tile_template(mosaic, key), fetcher=fetcher, zoom=zoom)
-
-
-def _fetch_nicfi(bbox: BBox, size: int, _fmt: str, fetcher: Fetcher | None) -> bytes:
-    return fetch_planet_nicfi(bbox, size, fetcher=fetcher)
-
-
 PROVIDERS: dict[str, BasemapProvider] = {
     "esri_world_imagery": BasemapProvider(
         name="esri_world_imagery",
@@ -192,17 +156,6 @@ PROVIDERS: dict[str, BasemapProvider] = {
         ),
         redistributable=False,
         fetch=_fetch_esri,
-    ),
-    "planet_nicfi": BasemapProvider(
-        name="planet_nicfi",
-        attribution="Planet Labs PBC — NICFI (Norway's International Climate and Forests Initiative)",
-        licence=(
-            "NICFI : usage et redistribution autorises sous attribution (donnees ouvertes pour la "
-            "ceinture tropicale). Cle PLANET_API_KEY requise, cote serveur uniquement."
-        ),
-        redistributable=True,
-        fetch=_fetch_nicfi,
-        date_hint="mosaique mensuelle NICFI (date = mois de la mosaique)",
     ),
 }
 

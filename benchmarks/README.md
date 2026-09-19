@@ -118,7 +118,7 @@ production doit s'entraîner sur des HR **libres** (NAIP, ou HR ouverte de la r�
 | **GPU local (4070 Ti S)** | débit | ×7 ; entraîne un modèle en 8 min |
 | **Colab gratuit** | banc d'essai | **non exécuté** : sessions éphémères, quotas → expérimentation, jamais production |
 | **HuggingFace** | modèles/datasets | **utilisé** (Swin2SR, SwinIR, Nomos) |
-| **Source haute résolution (Esri/NICFI)** | lisibilité réelle | **dominant** ; seul levier qui change le plafond |
+| **Source haute résolution (archive datée Esri)** | lisibilité réelle | **dominant** ; seul levier qui change le plafond |
 
 ## Limites (à ne pas masquer)
 

@@ -13,6 +13,9 @@ HR agrege a 10 m et le LR reel, et on l'ecrit dans le manifeste.
 Avertissement consigne : la mosaique d'archive n'est PAS une acquisition du meme jour que la scene
 Sentinel-2 (elle est datee, mais composite) — c'est la limite intrinseque des paires cross-capteur.
 
+Voie HR par mosaique mensuelle : programme clos en 2025, voie supprimee — cf RAPPORT.md §6.
+Source HR unique = archive datee Esri.
+
 Exemple :
     python housat-finedouala-1/04_pairs_reelles.py --bbox 9.70,4.04,9.71,4.05 --end 2025-03-01 \
         --patch 64 --max-patches 8
@@ -60,10 +63,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--hr-date", choices=("nearest", "before"), default="nearest",
                    help="nearest = release d'archive la plus PROCHE de la scene, dans les deux sens "
                         "(attaque l'ecart de date mesure par 05) ; before = ancien comportement")
-    p.add_argument("--hr-source", choices=("wayback", "nicfi"), default="wayback",
-                   help="HR : archive Esri (datee mais composite) ou MOSAIQUES MENSUELLES NICFI "
-                        "(4,77 m, licence propre, cle PLANET_API_KEY requise) — le levier de fond "
-                        "contre le decalage de date mesure par 05_calibrer_alignement.py")
     p.add_argument("--out", type=Path, default=ROOT / "housat-finedouala-1" / "data" / "pairs")
     args = p.parse_args(argv)
 
@@ -101,21 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     if hr_date is None:
         print("aucune imagerie d'archive datee <= scene : paire impossible")
         return 1
-    if args.hr_source == "nicfi":
-        # Mosaique MENSUELLE : la date HR colle au mois de la scene, ce qui supprime le decalage
-        # temporel que 05_calibrer_alignement.py a designe comme le facteur limitant.
-        from housat.config import settings
-        from housat.imagery.basemap import fetch_planet_nicfi
-        if not settings.planet_api_key:
-            print("NICFI indisponible : PLANET_API_KEY absente (.env). Licence NICFI : usage "
-                  "recherche/non-commercial, attribution obligatoire. Repli : --hr-source wayback.")
-            return 1
-        hr_png = fetch_planet_nicfi(args.bbox, size=4 * max(h, w),
-                                    mosaic=settings.nicfi_mosaic or None,
-                                    api_key=settings.planet_api_key)
-        hr_date = f"NICFI {sc.acquired:%Y-%m}"
-    else:
-        hr_png = fetch_wayback(args.bbox, hr_date, size=4 * max(h, w))
+    hr_png = fetch_wayback(args.bbox, hr_date, size=4 * max(h, w))
     hr = np.asarray(Image.open(io.BytesIO(hr_png)).convert("RGB"), dtype=np.uint8)
     # `fetch_wayback` renvoie un carre : on recadre au ratio EXACT 4x de la grille LR, sinon la
     # correspondance bloc HR <-> pixel LR derive sur l'axe le plus court (448/111 = 4,036 !).

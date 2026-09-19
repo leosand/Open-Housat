@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         train_pairs, val_pairs, used = paires_reelles(args.pairs_dir)
         if not train_pairs:
             print("aucune paire retenue par le filtre d'alignement de 05 : relancer 04_pairs_reelles "
-                  "avec --hr-source nicfi ou une archive plus proche de la scene")
+                  "avec une archive plus proche de la date de la scene (--hr-date before/nearest)")
             return 1
         print(f"paires REELLES retenues : {len(train_pairs)} (train) + {len(val_pairs)} (val) "
               f"sur {len(used)} fichier(s) : {', '.join(used)}")

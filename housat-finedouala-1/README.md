@@ -72,8 +72,10 @@ zone tenue à l'écart, carte d'incertitude si le modèle le permet, taille de c
 
 **Enseignement** : la géométrie n'est **jamais** décalée (0,0 px partout — le mapping ×4 et la projection
 sont justes) ; c'est la **proximité temporelle** qui gouverne la corrélation (5 j > 9 j > 23 j).
-Le levier n'est donc pas la géométrie mais **la date** : scène peu nuageuse + archive au plus près
-(piste de fond : mosaïques **NICFI** mensuelles, module `planet_nicfi` déjà présent).
+Le levier n'est donc pas la géométrie mais **la date** : scène peu nuageuse + archive au plus près.
+La seconde voie HR (mosaïques mensuelles, clé fournisseur requise) a été **supprimée du code** —
+programme clos en 2025, aucune habilitation : la seule source HR reste l'archive datée Esri.
+Cf `RAPPORT.md` §6 (Connaissances).
 
 **Réserve assumée** : mon seuil de 0,3 n'est **pas calibré** (aucun contrôle positif mesuré) — il
 marque « DOUTEUX » là où le plafond cross-capteur réel est inconnu. À calibrer avant toute conclusion.

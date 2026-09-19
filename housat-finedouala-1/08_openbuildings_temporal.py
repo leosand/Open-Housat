@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """08 — Intégration Google Open Buildings 2.5D Temporal & Validation Bâti Douala.
 
-Ce script matérialise l'alternative souveraine et gratuite au programme NICFI éteint en 2025.
+Ce script matérialise la voie souveraine et gratuite retenue pour le bâti : aucune clé, aucune
+habilitation, aucun compte.
 Il télécharge les rasters temporels annuels (2016-2023) d'Open Buildings 2.5D (Google Research)
 pour l'emprise demandée (Douala), extrait la présence bâtie, les comptes fractionnaires et
 les hauteurs de bâti, puis les rééchantillonne sur la grille Sentinel-2 locale (19x19 ou métropole).

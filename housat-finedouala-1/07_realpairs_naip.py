@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """07 — Entrainement sur VRAIES paires licences propres, sans cle ni habilitation.
 
-Solution alternative a NICFI : le harnais du projet (`benchmark_realpairs`) charge un jeu de paires
+Le harnais du projet (`benchmark_realpairs`) charge un jeu de paires
 **reelles** LR Sentinel-2 <-> HR independant. Son `main()` exige aussi SPOT et VENUS, absents du
 depot HuggingFace public (`isp-uv-es/opensr-test`, licence **MIT** ; NAIP = **domaine public USGS**,
 30 scenes, LR (30,4,121,121) uint16 -> HR (30,4,484,484), x4).

@@ -104,7 +104,7 @@ vision (U-Net siamois prévu en phase 2).
 | Couche | Technologie retenue | Justification d'ingénierie (décision CTO) |
 |---|---|---|
 | **Acquisition satellite** | STAC Client / Element84 AWS | Entrées Sentinel-2 L2A gratuites, sans quota restrictif et sans clé d'API. |
-| **Fond visuel (affichage)** | Esri World Imagery / Planet NICFI | Lisibilité de **toute** emprise lat/long : haute résolution à l'écran (Esri) ; NICFI 4,77 m **daté et redistribuable** pour les rapports. Sentinel-2 = détection, fond = contexte. |
+| **Fond visuel (affichage)** | Esri World Imagery | Lisibilité de **toute** emprise lat/long : haute résolution à l'écran. Sentinel-2 = détection, fond = contexte. |
 | **Surrésolution** | SEN2SR (détection) · EDSR-lite ONNX (affichage) | Deux voies cloisonnées : **détection** (SEN2SR satellite ou bicubique honnête) et **affichage** (`housat_sr`, EDSR-lite ×4 servi en **ONNX Runtime CPU, sans torch**, modèle régional remplaçable — ADR 0007). Rendu PNG par étirement 2-98 % + gamma + léger rehaussement. |
 | **Moteur d'indices** | NumPy + Rasterio + Shapely | Calcul vectoriel des réflectances (NDVI, NDBI, BSI), troncature d'anneau périphérique et masquage robuste. |
 | **Couche applicative API** | FastAPI + SQLModel | Typage strict Python 3.11, sérialisation Pydantic v2, erreurs standardisées RFC 7807 (`application/problem+json`). |
@@ -324,7 +324,7 @@ Accédez aux services une fois initialisés :
 
 | Intrant / Composant | Source technique | Structure de coût | Impact sur la viabilité |
 |---|---|---|---|
-| **Imagerie multispectrale** | Sentinel-2 L2A via AWS Element84 | **0,00 $** (Open Data Copernicus) | Aucun abonnement fournisseur (vs 7–12 $/km² chez Planet/SkyWatch). |
+| **Imagerie multispectrale** | Sentinel-2 L2A via AWS Element84 | **0,00 $** (Open Data Copernicus) | Aucun abonnement fournisseur (vs 7–12 $/km² chez les fournisseurs commerciaux). |
 | **Calcul d'inférence** | Runner local / GitHub Actions | **0,00 $** (Tier gratuit 2 000 min/mois) | Traitement par lots automatisé lors des révisites satellitaires. |
 | **Fond cartographique** | Tuiles raster OpenStreetMap | **0,00 $** (Licence ODbL / Open Data) | Visualisation spatiale sans clé propriétaire (rejet de Mapbox/Google). |
 | **Persistance des livrables** | PostgreSQL local / Cloudflare R2 | **0,00 $** (Tier gratuit sans coût d'egress) | Rétention pérenne des rapports d'avancement scellés. |

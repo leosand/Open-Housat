@@ -42,12 +42,5 @@ class Settings(BaseSettings):
     sr_tile: int = 256               # taille de tuile pour l'inference ONNX (memoire bornee)
     sr_scale: int = 4                # facteur d'echelle du modele perceptuel
 
-    # --- Fond visuel haute resolution / High-resolution visual basemap ---
-    # Cle Planet (NICFI) : SERVEUR uniquement — jamais exposee au navigateur (tile service Planet).
-    # Planet (NICFI) API key: SERVER-side only — never exposed to the browser.
-    planet_api_key: str = ""
-    # Mosaique NICFI datee (ex. planet_medres_normalized_analytic_2023-06_mosaic).
-    nicfi_mosaic: str = ""
-
 
 settings = Settings()

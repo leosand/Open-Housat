@@ -24,7 +24,7 @@ donnée opposable juridiquement. Le « 1 m » reste un **affichage** : une SR ×
 | `01_dataset_douala.py` | Dataset S2 : scènes qualifiées **par parcelle (SCL)**, masque bâti **OSM rasterisé** sur la grille du LR |
 | `02_finetune.py` | Fine-tuning : **AMP/FP16**, accumulation, suivi VRAM, **meilleur checkpoint seul**, `--pairs synthetic\|real` (filtre d'alignement calibré appliqué) |
 | `03_eval.py` | Garde-fous : **SAM**, **cohérence NDVI**, **texture sur l'eau**, étalon bicubique ; `--sr bicubic\|onnx` |
-| `04_pairs_reelles.py` | Paires **LR Sentinel-2 réelle ↔ HR datée** ; `--hr-source wayback\|nicfi`, `--hr-date nearest\|before` |
+| `04_pairs_reelles.py` | Paires **LR Sentinel-2 réelle ↔ HR datée** ; `--hr-date nearest\|before` (voie HR unique : archive Esri) |
 | `05_calibrer_alignement.py` | **La métrique d'alignement est-elle sensible ?** courbe de décalage forcé 0→8 px |
 | `06_apercu_html.py` | Comparateur **LR ↔ SR ↔ HR** auto-portant (HTML, aucune dépendance) |
 | `07_realpairs_naip.py` | Entraînement sur paires **licence propre** (HF `opensr-test`, MIT + NAIP domaine public) sans passer par un `main()` inadapté |
@@ -114,6 +114,11 @@ le critère décisionnaire est **le SCL par parcelle** (ADR 0010), pas la tuile.
 3. SCL Sentinel-2 à 20 m : une emprise de maison ne couvre aucun centre de pixel.
 4. Overpass/OSM : fiabilité réelle mesurée et repli d'endpoints.
 5. Scan de secrets en CI : il analyse **tout le diff de la PR**, pas le dernier commit.
+6. **Voie Planet/NICFI supprimée du code** (purge `fix(mnt)` du 2026-09-19, branche `finetune-douala`) :
+   programme clos 2025, aucune habilitation possible, clé compromise révoquée manuellement. Le
+   fournisseur de fond est désormais **unique** (`esri_world_imagery`, sans clé) — ne jamais
+   réintroduire un chemin authentifié sans habilitation écrite, et jamais étiqueter un repli comme
+   la source distante.
 
 *Note interne (hors branche) : 3 notes supplémentaires restent en brouillon sur d'autres projets.*
 

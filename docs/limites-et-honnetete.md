@@ -10,19 +10,34 @@
 |---|---|
 | **Ce qui est mesuré** | L'**emprise** déclarée (un rectangle lon/lat), **en entier**. Jamais un bâtiment désigné nommément. |
 | **Source de mesure** | Sentinel-2 L2A, **10 m par point** (bandes), **20 m** pour la couche de nuages SCL. |
-| **Indices** | NDVI (végétation), NDBI (bâti), BSI (sol nu), comparés à l'**image d'ancrage** $t_0$. |
-| **Étape (M0-M4)** | Sortie d'un **classifieur à seuils** (`pipeline/housat/observations.py::milestone_decision` + `detection/milestones.py`), **pas** une lecture d'image ni un modèle de vision. |
+| **Indices** | NDVI (végétation), NDBI (bâti), BSI (sol nu), comparés à l'**image d'ancrage** $t_0$ **et** à l'observation précédente. |
+| **Étape (M0-M4)** | Sortie d'un **classifieur à seuils** (`pipeline/housat/detection/milestones.py::classify`), alimenté par `detection/change.py::change_score` et `built_ratio`. **Pas** une lecture d'image ni un modèle de vision. |
 | **Rapport** | Le PDF reprend les **mêmes** chiffres persistés : aucune donnée recalculée à la génération. |
 
-Règle de lecture des jalons (`milestone_decision`) :
+Règle de lecture des jalons (`classify`). `built_ratio` = part de la parcelle **sans végétation**
+(NDBI > 0) ; ΔNDBI / ΔBSI = tendance mesurée contre l'observation **précédente** :
 
-| Condition mesurée | Jalon affiché |
-|---|---|
-| pivot détecté **et** zone changée en croissance (> 0,01) | **M2** structure |
-| pivot détecté seul | **M3** toiture |
-| zone changée en croissance (> 0,02) | **M1** fondations |
-| zone changée > 25 % **et** activité très faible (< 0,01) | **M4** finition |
-| aucun des cas ci-dessus | **M0** terrain nu |
+| Condition mesurée | Jalon affiché | Confiance |
+|---|---|---|
+| aucun changement (score < 0,02 et ΔNDBI, ΔBSI ≤ 0,01) **ou** `built_ratio` < 0,02 | **M0** terrain nu | 0,90 |
+| ΔBSI > 0,02 (sol nu qui apparaît) **et** `built_ratio` < 0,15 | **M1** fondation | 0,75 |
+| ΔNDBI > 0,015 (bâti en hausse) **et** `built_ratio` ≥ 0,15 | **M2** structure | 0,80 |
+| `built_ratio` ≥ 0,40 **et** \|ΔNDBI\| ≤ 0,015 **et** score < 0,08 (plateau) | **M3** toiture | 0,65 |
+| score < 0,03 **et** ΔBSI < 0 (le végétal revient) | **M4** finition | 0,60 |
+| état ambigu | **M1** (conservateur) | 0,40 |
+
+Deux propriétés sont **portées par le code et vérifiées par les tests** :
+
+- **les cinq jalons sont atteignables** — avant le 2026-09-19, « finition » était du **code mort**
+  (0 fois sur 6000 tirages) et une parcelle stable s'affichait « fondation détectée » ;
+- **le jalon ne régresse jamais** (`milestones.hold_milestone`) : un chantier ne se dé-construit pas.
+  Mesure du 2026-06-09 sur un chantier réel (40 observations) : le rail était passé M2 → M1 → M2 sur
+  trois dates dont l'emprise valait 0,2033 / 0,1794 / 0,1981 — identiques à la précision de la mesure.
+
+Ce que ces jalons **ne mesurent pas** : rien ici ne distingue une dalle d'une toiture par la
+**géométrie** ou la **hauteur**. La distinction repose sur des seuils spectraux et sur la stabilité
+(« plateau »). Le modèle U-Net siamois reste la dette documentée de `milestones.py` (phase 2) — et
+la voie **hauteur** existe (`08_openbuildings_temporal.py`), mais elle n'est pas branchée à l'IHM.
 
 ## 2. Limites physiques (non négociables)
 

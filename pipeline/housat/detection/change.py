@@ -31,6 +31,16 @@ def feature_stack(b: dict[str, np.ndarray]) -> np.ndarray:
     return np.stack([ndvi(b), ndbi(b), bsi(b)], axis=-1)
 
 
+def built_ratio(b: dict[str, np.ndarray]) -> float:
+    """Part de pixels batis de la parcelle : NDBI > 0 (indicateur standard du bati).
+
+    C'est le signal d'ETAT (ou en est le bati), la ou les `delta_*_mean` de `change_score`
+    sont le signal de TENDANCE. `milestones.classify` a besoin des deux : sans l'etat, une
+    toiture posee et une dalle brute se ressemblent — les deux sont « du changement ».
+    """
+    return float((ndbi(b) > 0.0).mean())
+
+
 @dataclass
 class ChangeResult:
     score: float            # fraction de pixels changes [0,1]

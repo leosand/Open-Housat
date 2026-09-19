@@ -5,6 +5,34 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) · Versionnage
 Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
 
 ## [Unreleased]
+- **Jalons de chantier : le classifieur CONÇU est enfin branché** — `detection/milestones.py::classify`
+  existait, était testé, documenté… et **n'était appelé que par les tests**. Le worker utilisait un
+  second arbre de seuils (`observations.py::milestone_decision`, supprimé) construit sur la seule
+  **ampleur** du changement. Trois défauts mesurés en découlaient :
+  - **« Finition » (M4) était du code mort** — 0 fois sur 6000 tirages. Sa condition exigeait
+    `emprise > 0.25`, mais la branche M1 (`growth > 0.02`) était testée avant, et `growth` valait
+    toujours `emprise` parce que le worker passait une ligne de base de **zéros**
+    (`[np.zeros_like(p) for p in pvs]`). Cas falsifiant mesuré : `emprise=0.4938`, `activite=1.7e-07`
+    → le code répondait « M1 fondations » ;
+  - **« Terrain nu » n'était pas détecté** : c'était la branche `return 0` par défaut, donc « aucun
+    signal », pas « sol nu observé » ;
+  - **le rail régressait** : sur un chantier réel de 40 observations, le 06-06 → 06-09 → 06-14
+    affichait M2 → M1 → M2 avec des emprises de 0,2033 / 0,1794 / 0,1981, identiques à la précision
+    de la mesure. Un chantier ne se dé-construit pas.
+  Correctifs : le worker appelle `classify` alimenté par `change_score(prev, curr)` — les deux modules
+  sont faits pour s'emboîter (mêmes noms d'entrées) et **la frame `prev` était écrite en base depuis
+  le début sans jamais être relue** (`_load_frame_row(..., "prev")` : 0 appel mesuré) ; ajout de
+  `change.built_ratio()` (signal d'**état**, seul moyen de séparer une dalle d'une toiture) ; ajout de
+  `milestones.hold_milestone()` (**non-régression** du jalon) ; `confidence` vient désormais du
+  classifieur au lieu d'une constante (`0.8 if sen2sr else 0.55`) ; `delta_pra` exposait l'**emprise**
+  sous un faux nom, il porte maintenant le vrai `dpra` du NDBI.
+  Deux régressions du classifieur corrigées au passage, mesurées : une parcelle **stable** avec 10 %
+  de sol nu sortait « **M1 fondation détectée** » (M0 exigeait `built_ratio < 0.02`), et la première
+  version du correctif M0 **avalait M3** (un plateau à 69 % de bâti sortait « terrain nu »).
+  Preuves : les 5 jalons sont atteignables par la chaîne réelle (`test_frames.py`), le harnais V&V
+  remplace `A4.1` (« M2/M3/M4 ⇒ pivot ») par la garantie réelle (« jalons d'observation non
+  régressifs »), `built_ratio` est persisté, exposé par `/sites/{id}/progress` et affiché dans l'IHM
+  comme preuve de l'étape. Tests : **115 passed** (112 + 5 ajoutés − 2 supprimés avec la fonction morte).
 - **Purge Planet/NICFI (branche `finetune-douala`)** : le programme NICFI est clos depuis 2025 et aucune
   habilitation n'est possible → toute la voie authentifiée est **retirée du code** : fournisseur
   `planet_nicfi` + gabarit de tuiles (`pipeline/housat/imagery/basemap.py`), champs de configuration

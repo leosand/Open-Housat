@@ -103,27 +103,6 @@ def detect_pivot_pv(div: np.ndarray, pv_t: np.ndarray, *, eps: float = 1e-3) -> 
     return {"dpra": dpra, "mean_neg": mean_neg, "qualifie": qualifie}
 
 
-def milestone_decision(
-    pvs0: list[np.ndarray],
-    pvs_t: list[np.ndarray],
-    divs: list[np.ndarray],
-) -> tuple[int, bool, float]:
-    """Decision de jalon avec V&V pivot — retourne (M0..M4, pivot_confirme, croissance)."""
-    growth = robust_frac_joint(pvs_t) - robust_frac_joint(pvs0)
-    pivots = [bool(detect_pivot_pv(d, pv)["qualifie"]) for d, pv in zip(divs, pvs_t)]
-    any_pivot = any(pivots)
-    activity = float(np.mean([np.abs(d).mean() for d in divs]))
-    if any_pivot and growth > 0.01:
-        return 2, True, growth
-    if any_pivot:
-        return 3, True, growth
-    if growth > 0.02:
-        return 1, False, growth
-    if robust_frac_joint(pvs_t) > 0.25 and activity < 0.01:
-        return 4, False, growth
-    return 0, False, growth
-
-
 def image_png_rgb(
     bands: dict[str, np.ndarray],
     clip_hi: float = 0.35,

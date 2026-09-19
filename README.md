@@ -189,18 +189,23 @@ $$\text{dPRA} = \frac{\sum \text{div}[+]}{\sum PV_t[+]} > 0{,}15 \quad \text{ET}
 ```text
 [M0 : Terrain nu]
        │
-       ▼ (Hausse marquée du BSI, sol terrassé découvert)
+       ▼ (ΔBSI > 0,02 : du sol nu apparaît — terrassement/excavation — et part bâtie < 15 %)
 [M1 : Fondation détectée]
        │
-       ▼ (Pivot confirmé + croissance d'emprise bâtie dPRA > 0.15)
-[M2 : Structure en progression (murs / élévation)]
+       ▼ (ΔNDBI > 0,015 : le bâti progresse — murs/élévation — et part bâtie ≥ 15 %)
+[M2 : Structure en progression]
        │
-       ▼ (Plateau NDBI, stabilisation d'emprise, pic de réflectance toiture)
+       ▼ (part bâtie ≥ 40 % ET tendance NDBI plate |ΔNDBI| ≤ 0,015 ET activité < 0,08)
 [M3 : Toiture probable]
        │
-       ▼ (Stabilisation complète, rémanence végétale environnante)
+       ▼ (activité < 0,03 ET ΔBSI < 0 : le végétal revient — aménagement)
 [M4 : Finition / aménagement extérieur]
 ```
+
+> Ces seuils sont ceux de `pipeline/housat/detection/milestones.py::classify`, alimenté par
+> `change_score` (tendance) et `built_ratio` (état). Le jalon **ne régresse jamais**
+> (`hold_milestone`) : un chantier ne se dé-construit pas. Détail et limites :
+> [`docs/limites-et-honnetete.md`](docs/limites-et-honnetete.md).
 
 ---
 

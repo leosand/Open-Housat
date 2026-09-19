@@ -4,6 +4,26 @@ Tous les changements notables de Housat sont documentes ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) · Versionnage : [SemVer](https://semver.org/lang/fr/).
 Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
 
+## [v0.6.0] - 2026-09-19
+> Base : `main` = `6881ac0`. Entrée construite **exclusivement** depuis `git log --oneline 303ab3b..main`.
+> Version **MINOR** (fonctionnalités nouvelles, rétro-compatibles) : le dépôt n'avait **aucun tag**.
+
+- **Mesure d'emprise : l'IHM dit ce qu'elle mesure** (PR #1, commits `a6fe9bc` + `df8c65c`) —
+  l'emprise est **dessinée par l'utilisateur** (clic maintenu + glisser), la fiche affiche la **preuve**
+  de l'étape (« mesurée le … », image d'ancrage, % du carré modifié, indice), le jargon est replié, et
+  deux bugs racines sont corrigés : `map.loaded()` (MapLibre) qui perdait silencieusement toute couche
+  ajoutée pendant un chargement de tuiles, et les emprises de maison (10-20 m) rendues mesurables.
+- **CI planifiée réparée** (PR #2 `337e7f2`, PR #3 `5e12759` + `a74680e`) — le job cron `worker-run`
+  échouait **tous les jours** (`secrets.DATABASE_URL` inexistant → `Could not parse SQLAlchemy URL`) :
+  il tourne désormais sur une **base de service PostGIS** (aucun secret), crée le **schéma produit**
+  puis la table `reports`, et exerce le chemin PostgreSQL que le reste de la CI ne couvrait pas.
+- **Socle dataset bâti OSM** (PR #4 `07e4d43`) — `pipeline/housat/built_dataset.py` rasterise les
+  empreintes **OSM (ODbL)** sur la grille du LR Sentinel-2 ; alignement vecteur/raster **vérifié**
+  (49,8 % ↔ 50,4 % sur une scène réelle). **Correction d'une erreur de mesure** : un premier relevé
+  annonçait 0 bâtiment OSM à Douala — c'était une **réponse vide d'Overpass saturé** ; mesure refaite
+  (65 polygones sur l'îlot, 286 542 sur la métropole) et `fetch_buildings` réessaie désormais.
+- **Documentation de référence** : `docs/limites-et-honnetete.md`, `docs/glossaire.md`, ADR 0011/0012/0013.
+
 ## [v0.1.0] - 2026-09-16
 - **Socle dataset bâti (objectifs « contours » et « dalle/toit »)** : `pipeline/housat/built_dataset.py`
   rasterise les empreintes **OSM (ODbL)** sur la grille du LR Sentinel-2 (`all_touched=False`, règle

@@ -1,0 +1,12 @@
+AVANT (11 Go) : long-hr 2,8 Go · sen2naip_cs 4,9 Go · sen2naip_pairs 5,4 Go · v2-hr 1,9 Go · opensr 57 Mo · pairs 19 Mo · sen2naip 3,1 Mo
+SUPPRIME (re-derivables, hors Git) : long-*.npy v2-*.npy sen2naip-*.npy · sen2naip_cs/ · sen2naip_pairs/
+CONSERVE (utiles M0-M4 / preuve) :
+1.0K	housat-finedouala-1/data/built_mask.npz
+8.0K	housat-finedouala-1/data/lr_2024-12-01.npz
+1.0K	housat-finedouala-1/data/manifest.json
+8.0K	housat-finedouala-1/data/openbuildings_temporal_2023.npz
+4.0K	housat-finedouala-1/data/openbuildings_temporal_2023_report.json
+57M	housat-finedouala-1/data/opensr
+19M	housat-finedouala-1/data/pairs
+3.1M	housat-finedouala-1/data/sen2naip
+TOTAL APRES : 79M

@@ -1,6 +1,13 @@
 services:
   db:
     image: postgis/postgis:16-3.4
+    # `restart` EXPLICITE, et pas par symetrie : sans politique sur `db`, un redemarrage de Docker
+    # Desktop relancait `api` (qui a `restart: unless-stopped`) mais PAS la base. L'API partait alors
+    # en boucle de redemarrage sur
+    #   sqlalchemy.exc.OperationalError: could not translate host name "db" to address
+    # Mesure du 2026-09-19 : `infra-api-1 Restarting (1)`, `infra-db-1 Exited (255)`. Le symptome
+    # ressemble a « l'API est cassee » alors que la cause est un ordre de demarrage.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: housat
       POSTGRES_PASSWORD: housat
@@ -28,8 +35,13 @@ services:
     # V&V exécutable EN CONTENEUR : le dossier racine `tests/` n'était pas monté, donc la suite
     # `tests/test_08_openbuildings_temporal.py` était inatteignable depuis l'API (mesuré le
     # 2026-09-18 : « file or directory not found », 0/12 tests collectés).
+    # `scripts/` ajouté le 2026-09-19 pour la même raison : le harnais V&V live
+    # (`scripts/vv_live.sh`, 28 assertions A1-A10) était inatteignable depuis le conteneur
+    # (« bash: /srv/scripts/vv_live.sh: No such file or directory », code de sortie 127), ce qui
+    # obligeait à le lancer depuis l'hôte alors que le runbook d'exploitation le prévoit ici.
     volumes:
       - ../tests:/srv/tests:ro
+      - ../scripts:/srv/scripts:ro
       - ../housat-finedouala-1:/srv/housat-finedouala-1
     restart: unless-stopped
 
@@ -43,8 +55,19 @@ services:
       DISPLAY_SR_ENGINE: onnx
     depends_on:
       db: {condition: service_healthy}
-    profiles: ["manual"]  # usage : docker compose -f infra/docker-compose.yml run --rm worker
-    # ou docker compose ... run --rm worker python -m housat.worker --backfill 1
+    # Profil `manual` : le worker est PONCTUEL — il fait une passe sur les chantiers, puis sort avec
+    # le code 0. Ce n'est PAS un plantage : ne pas le « reparer ».
+    #
+    # Usage SUR (recommande) : `docker compose -f infra/docker-compose.yml run --rm worker`
+    #   -> conteneur ephemere, supprime a la sortie : aucun residu possible.
+    #
+    # Usage `up -d worker` : possible, mais ATTENTION au piege MESURE le 2026-09-19 —
+    #   `docker compose down` (SANS `--profile manual`) ne supprime PAS les conteneurs des profils
+    #   desactives. Le worker survit au `down`, conserve une reference vers le reseau supprime, et le
+    #   `up` suivant echoue sur :
+    #     failed to set up container networking: network <id> not found
+    #   -> passer `--profile manual` a down/ps/logs, ou `docker rm -f infra-worker-1` puis recreer.
+    profiles: ["manual"]
 
   web:
     build:

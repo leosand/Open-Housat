@@ -15,6 +15,23 @@ Horodatage ISO 8601 avec fuseau local (protocole harness-meta).
   dont `test_fetch_planet_nicfi_requires_credentials`). Les mentions **datées** (ce CHANGELOG, les ADR,
   `RAPPORT.md`, `docs/rapports/`) restent : elles documentent une décision historique, pas un chemin
   de code vivant.
+- **Exploitation locale : trois pannes mesurées corrigées + runbook** (`docs/ops-locale.md`) —
+  campagne d'exploitation du 2026-09-19 sur la pile Docker locale.
+  - `db` n'avait **aucune** politique de redémarrage alors qu'`api` avait `restart: unless-stopped` :
+    après un redémarrage de Docker Desktop, seule l'API revenait et bouclait sur
+    `could not translate host name "db" to address`. La base est désormais `restart: unless-stopped`.
+  - `scripts/` n'était **pas monté** dans le service `api` et l'image **ne contenait pas `curl`** :
+    l'étape 4 du runbook (`docker compose exec api bash /srv/scripts/vv_live.sh`) échouait en
+    **code 127**. Une fois les deux causes levées (montage `:ro` + `curl`/`ca-certificates` dans
+    `apps/api/Dockerfile`), le harnais tourne **dans le conteneur** : **29/29 PASS, 0 FAIL**.
+  - Le piège du profil `manual` est documenté **dans le fichier compose** : `docker compose down`
+    sans `--profile manual` ne supprime pas le worker, qui garde une référence vers le réseau
+    supprimé et fait échouer le `up` suivant (`failed to set up container networking: network <id>
+    not found`). Usage recommandé : `run --rm worker` (éphémère, aucun résidu).
+  - `docs/ops-locale.md` consigne les commandes exactes, les chiffres réels (12 / 112 / 29-29), les
+    budgets mémoire, l'arrêt propre, et le fait que **l'emprise du parcours E2E diffère** entre un run
+    depuis l'hôte (`.env` lu, 40 observations) et un run dans le conteneur (pas de `.env`,
+    5 observations) — les deux étant 29/29.
 
 ## [v0.6.0] - 2026-09-19
 > Base : `main` = `6881ac0`. Entrée construite **exclusivement** depuis `git log --oneline 303ab3b..main`.

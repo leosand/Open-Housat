@@ -8,9 +8,11 @@
 # Usage :
 #   bash scripts/vv_live.sh
 #   bash scripts/vv_live.sh --api http://localhost:8000 --timeout 900
+#   bash scripts/vv_live.sh --site-name "Mon chantier V&V"   # reutilise un nom fixe
 #
 # Emprise de test : lue dans .env (VVSITE_*), sinon les defauts du formulaire web.
 # Aucune localisation n'est ecrite en dur dans le depot (regle 7 : pas de ciblage visible).
+# Nom du chantier de test : horodate par defaut, pour que le harnais soit REJOUABLE (cf plus bas).
 #
 # --- Assertions et codes HTTP attendus (les memes que le .ps1) ------------------
 #   A6.0  GET  /healthz                          -> 200, JSON status=ok
@@ -51,11 +53,13 @@ set -uo pipefail
 API="http://localhost:8000"
 TIMEOUT=900
 PYTHON="${PYTHON:-python}"
+SITE_NAME_OPT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --api) API="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
+    --site-name) SITE_NAME_OPT="$2"; shift 2 ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "argument inconnu: $1" >&2; exit 2 ;;
   esac
@@ -70,6 +74,12 @@ RESULT_FILE="$TMP/results"
 FAILS=0
 
 # --- Parcelle de test depuis .env (meme logique que le .ps1) --------------------
+# REJOUABILITE : l'API refuse (409) un chantier de MEME NOM + MEME EMPRISE (garde anti-doublon de
+# `POST /sites`, ajoutee apres cinq « Ma maison » vides). Le `.ps1` ne suffixe pas le nom : sa
+# DEUXIEME execution echoue donc en 409, laisse `$siteId` vide et enchainait une cascade de 404 —
+# et quand bien meme le site serait reutilise, le bloc rapports A10.4 retomberait sur le 409
+# d'idempotence du rapport au lieu de tester la GENERATION. On horodate donc le nom du chantier de
+# test (sauf `--site-name` explicite), ce qui rend le harnais rejouable et garde A10 discriminant.
 env_get() {  # env_get CLE [defaut]
   local v=""
   if [ -f "$ROOT/.env" ]; then
@@ -78,6 +88,11 @@ env_get() {  # env_get CLE [defaut]
   printf '%s' "${v:-${2:-}}"
 }
 SITE_NAME="$(env_get VVSITE_NAME 'VV Live Parcelle')"
+if [ -n "$SITE_NAME_OPT" ]; then
+  SITE_NAME="$SITE_NAME_OPT"
+else
+  SITE_NAME="$SITE_NAME $(date +%Y%m%d-%H%M%S)"
+fi
 MIN_LON="$(env_get VVSITE_MIN_LON '9.70')"
 MIN_LAT="$(env_get VVSITE_MIN_LAT '4.04')"
 MAX_LON="$(env_get VVSITE_MAX_LON '9.71')"
@@ -177,6 +192,21 @@ POLY_OK="$(jsonfield "$B" polygon_geojson)"
 chk A6.2 "POST /sites -> 201 + polygon GeoJSON" \
   "$([ "$CODE" = "201" ] && case "$POLY_OK" in *Polygon*) echo 1;; *) echo 0;; esac)" \
   "status=$CODE id=$SID"
+
+# ABANDON EXPLICITE : sans identifiant de chantier, les assertions A1/A2/A5/A8/A9/A10 ne sont pas
+# « vertes », elles sont HORS DE PORTEE. On le dit et on sort — un enchainement de 404 ne doit
+# jamais etre presente comme un resultat.
+if [ -z "$SID" ]; then
+  echo
+  echo "[ABANDON] POST /sites a repondu $CODE sans identifiant de chantier."
+  echo "          A1, A2, A5, A8, A9 et A10 sont HORS DE PORTEE => NON CONCLUANT, jamais vert."
+  echo "          Cause probable : chantier de MEME NOM + MEME EMPRISE deja existant (409)."
+  echo "          Correctif : relancer sans --site-name (le nom est horodate) ou changer --site-name."
+  TOTAL="$(wc -l < "$RESULT_FILE" | tr -d ' ')"
+  echo
+  echo "RESULTAT : $((TOTAL - FAILS))/$TOTAL verifications PASS, $FAILS FAIL (abandon, 6 blocs non atteints)"
+  exit 1
+fi
 
 req POST /sites "$(printf '{"name":"bbox KO","owner_email":"vv@example.com","min_lon":%s,"min_lat":%s,"max_lon":%s,"max_lat":%s}' \
   "$MIN_LON" "$MIN_LAT" "$("$PYTHON" -c "print(${MIN_LON}-0.01)")" "$MAX_LAT")"

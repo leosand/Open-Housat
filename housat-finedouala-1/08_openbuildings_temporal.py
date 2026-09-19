@@ -24,13 +24,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import math
 import sys
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Final, Sequence
+from typing import Final, Sequence
 
 import numpy as np
 
@@ -41,7 +40,35 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 # Constantes géographiques et métadonnées
 DOUALA_METROPOLE: Final[tuple[float, float, float, float]] = (9.60, 3.95, 9.85, 4.15)
 ILOT_VALIDATION: Final[tuple[float, float, float, float]] = (9.7042, 4.0442, 9.7058, 4.0458)
-URL_CATALOG_BASE: Final[str] = "https://storage.googleapis.com/open-buildings-temporal/v1"
+
+# --- Voie d'acces OFFICIELLE, mesuree le 2026-09-19 (aucune URL inventee) ---------------------
+# Bucket public, sans authentification. Structure REELLE relevee dans les listes d'URL maintenues
+# par `saiga143/google-2.5d-bulk-download` (fichiers `ISO3_YYYY.txt`, source HDX
+# `data.humdata.org/dataset/google-open-buildings-temporal`) :
+#
+#     https://storage.googleapis.com/open-buildings-temporal-data/v1/geotiffs/<composite>/tile_<hash>.tif
+#
+# Mesures du 2026-09-19 (HEAD reel, journalise) :
+#   - `.../v1/geotiffs/10fac_2023_06_30/tile_5nIARKZEFYU.tif` -> **HTTP 200**,
+#     `application/octet-stream` : le bucket est donc PUBLIC et joignable sans cle ;
+#   - `CMR_2023.txt` = **3984 tuiles** reparties sur **119** dossiers composites, nommes
+#     `<5 hex>_<annee>_06_30` (ex. `10fac_2023_06_30`) avec des fichiers `tile_<11 caracteres>`
+#     (ex. `tile_5nIARKZEFYU`) : ces noms sont **opaques**, sans latitude ni longitude.
+#
+# CONSEQUENCE ASSUMEE : ces listes ne portent AUCUN index lat/lon -> tuile. L'ancienne resolution
+# fabriquait un chemin `/CMR/tiles/open_buildings_temporal_CMR_2023_N04_E008.tif` et un jeton
+# `N04_E008` (grille de 2 degres) : ce chemin n'existe pas (**HTTP 404 mesure**) et le jeton etait
+# une invention. On ne remplace pas une invention par une deuxieme : la resolution ci-dessous
+# REFUSE de repondre tant qu'un index de tuiles officiel n'est pas fourni.
+OB_TEMPORAL_BUCKET: Final[str] = (
+    "https://storage.googleapis.com/open-buildings-temporal-data/v1/geotiffs"
+)
+OB_TEMPORAL_LAYOUT: Final[str] = f"{OB_TEMPORAL_BUCKET}/<composite>/tile_<hash>.tif"
+OB_TEMPORAL_INDEX_ABSENT: Final[str] = (
+    "index lat/lon -> tuile absent des listes publiques (noms de composite et de tuile opaques, "
+    "mesure du 2026-09-19) : voie a etablir via le depot HDX `google-open-buildings-temporal` "
+    "ou le catalogue Earth Engine `GOOGLE/Research/open-buildings-temporal/v1/annual`"
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,38 +127,50 @@ def parse_bbox(txt: str) -> tuple[float, float, float, float]:
     return min_lon, min_lat, max_lon, max_lat
 
 
-def lonlat_to_s2_tile_token(lon: float, lat: float) -> str:
-    """Détermine le préfixe spatial pour le partitionnement S2/Mercator d'Open Buildings.
-    
-    Pour Douala (~4.05°N, 9.70°E), génère le jeton géographique N04_E008.
+def resolve_openbuildings_tile_url(
+    bbox: tuple[float, float, float, float], year: int
+) -> TemporalTileMetadata | None:
+    """Renvoie les metadonnees de tuile distante, ou `None` si aucune URL ne peut etre ETABLIE.
+
+    Ne devine JAMAIS : l'absence d'index lat/lon -> tuile est un fait mesure
+    (`OB_TEMPORAL_INDEX_ABSENT`). L'appelant doit traiter `None` comme « pas de source distante »
+    et etiqueter le repli local comme tel — c'est la seule reponse honnete disponible aujourd'hui.
+    Emprise et annee restent des parametres : ce point d'entree est le SEAM ou brancher l'index
+    officiel le jour ou il sera disponible, sans toucher au reste du pipeline.
     """
-    grid_lat = int(math.floor(lat / 2.0) * 2)
-    grid_lon = int(math.floor(lon / 2.0) * 2)
-    lat_prefix = f"N{abs(grid_lat):02d}" if grid_lat >= 0 else f"S{abs(grid_lat):02d}"
-    lon_prefix = f"E{abs(grid_lon):03d}" if grid_lon >= 0 else f"W{abs(grid_lon):03d}"
-    return f"{lat_prefix}_{lon_prefix}"
-
-
-def resolve_openbuildings_tile_url(bbox: tuple[float, float, float, float], year: int) -> TemporalTileMetadata:
-    """Résout l'adresse de téléchargement HTTPS publique pour l'emprise ciblée."""
-    center_lon = (bbox[0] + bbox[2]) / 2.0
-    center_lat = (bbox[1] + bbox[3]) / 2.0
-    tile_id = lonlat_to_s2_tile_token(center_lon, center_lat)
-    
-    url = f"{URL_CATALOG_BASE}/CMR/tiles/open_buildings_temporal_CMR_{year}_{tile_id}.tif"
-    
-    return TemporalTileMetadata(
-        country_iso3="CMR",
-        year=year,
-        tile_id=tile_id,
-        download_url=url,
-        sha256=None,
+    logger.warning(
+        "Aucune URL distante etablie pour bbox=%s annee=%d : %s",
+        bbox, year, OB_TEMPORAL_INDEX_ABSENT,
     )
+    return None
 
 
-# Sonde de telechargement : on enregistre le CODE HTTP REELLEMENT recu (pas l'intention). Sans cela,
-# le rapport pouvait annoncer la source Google alors que le telechargement avait echoue en 404.
-DOWNLOAD_PROBE: dict[str, object] = {"url": None, "http_status": None}
+def decide_provenance(
+    probe_status: object, tuile_utilisee: bool, osm_disponible: bool
+) -> tuple[str, str, str]:
+    """Source, provenance et accord OSM — calcules sur des FAITS, jamais sur une intention.
+
+    Regle non negociable : une sonde HTTP 200 ne suffit JAMAIS a s'attribuer la source. Il faut que
+    les valeurs du rapport proviennent REELLEMENT de la tuile distante (`tuile_utilisee=True`) ;
+    telecharger un fichier sans le lire laisse donc la provenance au repli local. Sans cette regle,
+    le rapport pouvait afficher « Google Open Buildings » et `CONFORME` sur des valeurs fabriquees
+    localement : c'est le mensonge de provenance interdit par `docs/limites-et-honnetete.md` § 4.7.
+    (Le code HTTP reel reste consigne dans le rapport : c'est la trace de la sonde, pas un droit
+    de propriete sur la source.)
+    """
+    if tuile_utilisee and osm_disponible:
+        return ("Google Open Buildings 2.5D Temporal V1", "remote_download", "CONFORME")
+    if tuile_utilisee:
+        return (
+            "Google Open Buildings 2.5D Temporal V1",
+            "remote_download",
+            "NON_APPLICABLE (masque OSM ODbL absent : aucun accord mesurable)",
+        )
+    return (
+        "calibrage local vectoriel OSM ODbL (repli)",
+        "local_fallback",
+        "NON_VERIFIABLE (donnees issues du repli local, source Google indisponible)",
+    )
 
 
 def probe_http_status(url: str) -> object:
@@ -153,27 +192,25 @@ def download_tile_with_backoff(url: str, dest_path: Path, max_retries: int = 3) 
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = dest_path.with_suffix(".tmp")
-    
+
     headers = {"User-Agent": "Housat-EO-Downloader/1.0 (+https://github.com/leosand/Housat)"}
     req = urllib.request.Request(url, headers=headers)
-    
+
     for attempt in range(1, max_retries + 1):
         try:
             logger.info("Téléversement/Récupération tentative %d/%d depuis %s...", attempt, max_retries, url)
             with urllib.request.urlopen(req, timeout=30) as resp, open(temp_path, "wb") as out_file:
                 while chunk := resp.read(65536):
                     out_file.write(chunk)
-            
+
             temp_path.replace(dest_path)
-            DOWNLOAD_PROBE.update(http_status=200, url=url)
             logger.info("Téléchargement réussi : %s (%.2f Mo)", dest_path.name, dest_path.stat().st_size / 1e6)
             return True
         except Exception as err:
-            DOWNLOAD_PROBE.update(http_status=getattr(err, "code", type(err).__name__), url=url)
             logger.warning("Échec tentative %d/%d pour %s : %s", attempt, max_retries, url, err)
             if temp_path.exists():
                 temp_path.unlink()
-                
+
     return False
 
 
@@ -191,11 +228,11 @@ def synthesize_temporal_proxy(
     """
     height, width = target_shape
     rng = np.random.default_rng(seed=42)
-    
+
     if osm_mask is not None and osm_mask.shape == target_shape:
         base_presence = osm_mask.astype(np.float32) * 0.85 + rng.uniform(0.0, 0.12, size=target_shape).astype(np.float32)
         base_presence = np.clip(base_presence, 0.0, 1.0)
-        
+
         height_map = np.where(osm_mask > 0, rng.normal(loc=4.5, scale=1.2, size=target_shape), 0.0)
         height_map = np.clip(height_map, 0.0, 28.0).astype(np.float32)
     else:
@@ -217,9 +254,9 @@ def compute_metrics(presence: np.ndarray, height: np.ndarray, threshold: float =
     pixel_count = presence.size
     built_pixels = int(np.sum(built_mask))
     built_fraction = built_pixels / float(pixel_count) if pixel_count > 0 else 0.0
-    
+
     presence_mean = float(np.mean(presence))
-    
+
     if built_pixels > 0:
         built_heights = height[built_mask]
         p50 = float(np.percentile(built_heights, 50))
@@ -285,7 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     manifest_path = args.out / "manifest.json"
     osm_mask_path = args.out / "built_mask.npz"
-    
+
     target_shape: tuple[int, int] = (64, 64)
     osm_mask: np.ndarray | None = None
 
@@ -307,20 +344,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as exc:
             logger.warning("Impossible de lire built_mask.npz (%s)", exc)
 
+    # --- Voie distante : etablie ou refusee, jamais devinee ------------------------------------
     meta = resolve_openbuildings_tile_url(args.bbox, args.year)
-    dest_tif = args.out / f"openbuildings_{meta.country_iso3}_{meta.year}_{meta.tile_id}.tif"
-    
-    success = download_tile_with_backoff(meta.download_url, dest_tif, max_retries=2)
-    
-    if not success:
+    tuile_utilisee = False          # devient True le jour ou un lecteur GeoTIFF produit `layers`
+    probe_url: str | None = None
+    probe_status: object = "not_attempted"
+
+    if meta is None:
         logger.warning(
-            "Téléchargement distant non accessible (environnement hermétique). "
-            "Basculement sur le calibrage local vectoriel OSM / Sentinel-2."
+            "Aucune source distante : les valeurs de ce rapport proviennent du REPLI LOCAL "
+            "(calibrage vectoriel OSM ODbL / Sentinel-2) et le rapport le declare."
         )
-        layers = synthesize_temporal_proxy(args.bbox, target_shape, osm_mask)
     else:
-        logger.info("Fichier GeoTIFF prêt pour rééchantillonnage.")
-        layers = synthesize_temporal_proxy(args.bbox, target_shape, osm_mask)
+        probe_url = meta.download_url
+        probe_status = probe_http_status(probe_url)
+        dest_tif = args.out / f"openbuildings_{meta.country_iso3}_{meta.year}_{meta.tile_id}.tif"
+        if download_tile_with_backoff(probe_url, dest_tif, max_retries=2):
+            # Telecharger n'est PAS utiliser : aucun lecteur raster ne produit encore `layers`
+            # depuis la tuile, donc `tuile_utilisee` reste False et la provenance reste le repli.
+            logger.info(
+                "GeoTIFF distant telecharge (%s) — lecteur raster non branche : les valeurs "
+                "restent issues du repli local (cf decide_provenance).", dest_tif.name,
+            )
+        else:
+            logger.warning("Telechargement distant indisponible (HTTP %s).", probe_status)
+
+    layers = synthesize_temporal_proxy(args.bbox, target_shape, osm_mask)
 
     metrics = compute_metrics(layers["presence"], layers["height"], threshold=args.presence_threshold)
     logger.info("Résultat d'évaluation : %s", asdict(metrics))
@@ -336,28 +385,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     logger.info("Tenseurs de vérité terrain persistés : %s (%.2f Mo)", npz_out.name, npz_out.stat().st_size / 1e6)
 
-    # PROVENANCE REELLE : on n'ecrit « Google » que si le code HTTP vaut 200. Sinon on etiquete le
-    # repli local comme tel — un CONFORME emis par un repli serait un mensonge de provenance.
-    if DOWNLOAD_PROBE["http_status"] is None:      # cache local : on sonde quand meme l'URL
-        DOWNLOAD_PROBE.update(http_status=probe_http_status(meta.download_url),
-                              url=meta.download_url)
-    remote_ok = DOWNLOAD_PROBE["http_status"] == 200
-    if remote_ok:
-        source, provenance = "Google Open Buildings 2.5D Temporal V1", "remote_download"
-    else:
-        source, provenance = ("calibrage local vectoriel OSM ODbL (repli)", "local_fallback")
-        logger.warning("PROVENANCE : source Google NON utilisee (HTTP %s) — valeurs issues du repli "
-                       "local ; le rapport le declare explicitement.",
-                       DOWNLOAD_PROBE["http_status"])
+    # PROVENANCE REELLE : calculee sur des faits (sonde + usage effectif de la tuile), jamais sur
+    # une intention. Un CONFORME emis par un repli serait un mensonge de provenance.
+    source, provenance, agreement = decide_provenance(
+        probe_status, tuile_utilisee, osm_mask is not None
+    )
+    if provenance != "remote_download":
+        logger.warning(
+            "PROVENANCE : source Google NON utilisee (sonde HTTP %s, tuile utilisee=%s) — les "
+            "valeurs viennent du repli local et le rapport le declare.", probe_status, tuile_utilisee,
+        )
     report = {
         "timestamp": date.today().isoformat(),
         "source": source,
         "provenance": provenance,
         "dataset_license": "CC-BY-4.0 / Open Data",
         "download": {
-            "url": DOWNLOAD_PROBE["url"] or meta.download_url,
-            "http_status": DOWNLOAD_PROBE["http_status"],
-            "verifie_par": "HEAD/GET reel (aucune URL supposee)",
+            "url": probe_url,
+            "http_status": probe_status,
+            "attendue_a": OB_TEMPORAL_LAYOUT,
+            "raison_si_non_tentee": OB_TEMPORAL_INDEX_ABSENT if probe_url is None else None,
+            "verifie_par": "sonde HEAD reelle ; aucune URL supposee (cf OB_TEMPORAL_LAYOUT)",
         },
         "spatial_coverage": {
             "bbox": args.bbox,
@@ -367,11 +415,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "metrics": asdict(metrics),
         "validation_against_osm": {
             "osm_mask_present": osm_mask is not None,
-            "agreement_status": (
-                "CONFORME" if (remote_ok and osm_mask is not None)
-                else "NON_VERIFIABLE (donner repli local, source Google indisponible)" if not remote_ok
-                else "NON_APPLICABLE"),
-            "regle": "CONFORME exige la source officielle ET un accord mesure avec OSM",
+            "agreement_status": agreement,
+            "regle": (
+                "CONFORME exige la source officielle REELLEMENT utilisee ET un accord mesure avec OSM"
+            ),
         },
         "artifact_file": npz_out.name,
     }

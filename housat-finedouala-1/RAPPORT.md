@@ -130,7 +130,20 @@ le critère décisionnaire est **le SCL par parcelle** (ADR 0010), pas la tuile.
 4. **Habilitation NICFI** (administratif) : seule voie vers des paires **Douala datées** de qualité.
 5. **Segmentation bâti** (objectif 2) : U-Net sur le masque OSM — supervision déjà **vérifiée alignée**.
 6. **Tête dalle/toit** (objectif 3) : trajectoire temporelle + arbitrage HR datée.
-7. **Open Buildings 2.5D** : l'URL publique testée renvoie **404** — vérifier la vraie voie d'accès (GeoTIFF partitionnés, dépôt `saiga143/google-2.5d-bulk-download`) ou acter que le jeu temporel exige **Earth Engine** (authentification) ; en attendant, le script est un **repli local explicitement étiqueté**, jamais une validation de la source distante.
+7. **Open Buildings 2.5D — voie d'accès TRANCHÉE par la mesure (2026-09-19).** Le bucket public
+   n'était pas le problème : la structure réelle du stockage — `https://storage.googleapis.com/
+   open-buildings-temporal-data/v1/geotiffs/<composite>/tile_<hash>.tif` — répond **HTTP 200** sans
+   aucune clé (sonde HEAD sur `10fac_2023_06_30/tile_5nIARKZEFYU.tif`). Ce qui **manque** est un
+   **index lat/lon → tuile** : les listes officielles (`saiga143/google-2.5d-bulk-download`, source HDX
+   `google-open-buildings-temporal` ; `CMR_2023.txt` = **3 984 tuiles / 119 dossiers composites**,
+   `tile_<11 caractères>`) ne portent que des noms **opaques**. L'ancienne URL
+   (`/CMR/tiles/open_buildings_temporal_CMR_2023_N04_E008.tif`, jeton de grille 2° inventé) était donc
+   une **invention** : **404** mesuré. Le script ne devine plus rien —
+   `resolve_openbuildings_tile_url` renvoie `None`, le rapport écrit
+   `download.http_status = "not_attempted"` + `raison_si_non_tentee`, et la provenance reste
+   `local_fallback` / `NON_VERIFIABLE`. **Prochaine session** : obtenir l'index (manifeste de tuiles
+   HDX, ou export Earth Engine `GOOGLE/Research/open-buildings-temporal/v1/annual`) ou basculer sur la
+   voie **polygones V3** (CSV par cellule, filtre bbox).
 8. **Intégration produit** : déposer le meilleur `.onnx` dans `pipeline/housat/models/` (voie affichage) ;
    l'évaluation `03` peut devenir un **contrôle de non-régression en CI**.
 9. **Comparateur** : alimenter `06` avec le modèle ONNX (aujourd'hui il affiche le bicubique comme étalon).

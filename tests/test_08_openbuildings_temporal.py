@@ -30,8 +30,9 @@ sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 parse_bbox = mod.parse_bbox
-lonlat_to_s2_tile_token = mod.lonlat_to_s2_tile_token
 resolve_openbuildings_tile_url = mod.resolve_openbuildings_tile_url
+decide_provenance = mod.decide_provenance
+OB_TEMPORAL_LAYOUT = mod.OB_TEMPORAL_LAYOUT
 compute_metrics = mod.compute_metrics
 synthesize_temporal_proxy = mod.synthesize_temporal_proxy
 BuildingMetrics = mod.BuildingMetrics
@@ -58,22 +59,43 @@ class TestBBoxParsing:
             parse_bbox("9.60,3.95,9.85")
 
 
-class TestGeodesicTokening:
-    """Validation de l'adressage spatial par tuilage géodésique mondial."""
+class TestOpenBuildingsTileResolution:
+    """Vraie voie d'accès Open Buildings 2.5D : mesurée, jamais inventée.
 
-    def test_token_douala(self) -> None:
-        token = lonlat_to_s2_tile_token(9.70, 4.05)
-        assert token == "N04_E008"
+    Historique : les tests précédents verrouillaient une invention (jeton de grille 2° `N04_E008` et
+    chemin `/CMR/tiles/open_buildings_temporal_CMR_2023_N04_E008.tif`) qui renvoyait **HTTP 404**.
+    Ils sont remplacés par des tests qui verrouillent la mesure du 2026-09-19.
+    """
 
-    def test_token_chicago(self) -> None:
-        token = lonlat_to_s2_tile_token(-87.62, 41.88)
-        assert token == "N40_W088"
+    def test_layout_structure_officielle_mesuree(self) -> None:
+        """La constante décrit le chemin RÉELLEMENT servi (HEAD 200 mesuré le 2026-09-19)."""
+        assert OB_TEMPORAL_LAYOUT.startswith(
+            "https://storage.googleapis.com/open-buildings-temporal-data/v1/geotiffs/"
+        )
+        assert OB_TEMPORAL_LAYOUT.endswith("/tile_<hash>.tif")
 
-    def test_tile_url_resolution_cameroon(self) -> None:
-        meta = resolve_openbuildings_tile_url((9.60, 3.95, 9.85, 4.15), 2023)
-        assert meta.country_iso3 == "CMR"
-        assert meta.year == 2023
-        assert "open_buildings_temporal_CMR_2023_N04_E008.tif" in meta.download_url
+    def test_resolution_refuse_d_inventer(self) -> None:
+        """Sans index lat/lon -> tuile, aucune URL n'est fabriquée.
+
+        Fabriquer une URL « plausible » produit un 404 puis un repli étiqueté comme la source
+        distante — le mensonge de provenance que `docs/limites-et-honnetete.md` § 4.7 interdit.
+        """
+        assert resolve_openbuildings_tile_url((9.60, 3.95, 9.85, 4.15), 2023) is None
+        assert resolve_openbuildings_tile_url((-87.64, 41.87, -87.60, 41.90), 2023) is None
+
+    def test_sonde_200_ne_donne_pas_la_source(self) -> None:
+        """La source distante ne s'attribue que si la tuile est RÉELLEMENT utilisée."""
+        source, provenance, accord = decide_provenance(200, tuile_utilisee=False, osm_disponible=True)
+        assert provenance == "local_fallback"
+        assert "repli" in source
+        assert accord.startswith("NON_VERIFIABLE")
+
+        source_ok, prov_ok, accord_ok = decide_provenance(
+            200, tuile_utilisee=True, osm_disponible=True
+        )
+        assert prov_ok == "remote_download"
+        assert accord_ok == "CONFORME"
+        assert "Google" in source_ok
 
 
 class TestPhysicalMilestonesVV:

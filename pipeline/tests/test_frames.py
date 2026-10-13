@@ -4,6 +4,8 @@ Unit tests for frames + V&V pivot indicators on synthetic arrays.
 
 import numpy as np
 from housat import observations as obs
+from housat.detection import change
+from housat.detection.milestones import Milestone, classify, hold_milestone
 
 SHAPE = (64, 64)
 
@@ -58,39 +60,56 @@ def test_detect_pivot_qualifie() -> None:
     assert r["qualifie"] is True
 
 
-def test_milestone_pivot_confirme_m2() -> None:
-    # M2 = pivot qualifie ET croissance d'emprise (dPRA > 0.15, growth > 0.01).
-    # La croissance est mesuree sur l'emprise ROBUSTE { PV > q80(PV > 0) } : une
-    # hausse UNIFORME n'y contribue jamais (tous les pixels actifs valent q80, donc
-    # le masque strict est vide) -> il faut une emprise batie heterogene, le patch
-    # neuf dominant la ligne de base.
-    anchor = [np.zeros(SHAPE, dtype=np.float32) for _ in range(3)]  # M0 : terrain nu, PV0 = 0
-    curr = []
-    for _ in range(3):
-        c = np.full(SHAPE, 0.02, dtype=np.float32)  # derive legere du terrain (sous q80)
-        c[16:40, 16:40] = 0.50                      # emprise batie : fondations + elevation
-        curr.append(c)
-    pvs, divs = [], []
-    for a, c in zip(anchor, curr):
-        pv, div = obs.pv_div(a, c)
-        pvs.append(pv)
-        divs.append(div)
-    pvs0 = [np.zeros_like(p) for p in pvs]
-    ms, pivot, growth = obs.milestone_decision(pvs0, pvs, divs)
-    assert pivot is True
-    assert ms == 2
-    assert growth > 0.01
+def _scene(veg: float, soil: float, built: float) -> dict[str, np.ndarray]:
+    """Bandes synthetiques melangeant 3 materiaux : vegetal, sol nu, bati (red/blue/nir/swir16)."""
+    r = np.random.default_rng(3).random(SHAPE)
+    m_veg = r < veg
+    m_soil = (r >= veg) & (r < veg + soil)
+    out: dict[str, np.ndarray] = {}
+    for k, (v, s, b) in {"red": (0.05, 0.22, 0.30), "blue": (0.03, 0.18, 0.28),
+                         "nir": (0.45, 0.25, 0.16), "swir16": (0.15, 0.32, 0.42)}.items():
+        a = np.full(SHAPE, 0.05, dtype=np.float32)
+        a[m_veg], a[m_soil], a[~m_veg & ~m_soil] = v, s, b
+        out[k] = a
+    return out
 
 
-def test_milestone_m0_stable() -> None:
-    anchor = [_field(0.30) for _ in range(3)]
-    pvs, divs = [], []
-    for a, c in zip(anchor, anchor):
-        pv, div = obs.pv_div(a, c)
-        pvs.append(pv)
-        divs.append(div)
-    ms, pivot, _ = obs.milestone_decision([np.zeros_like(p) for p in pvs], pvs, divs)
-    assert ms == 0 and pivot is False
+def _stage(prev: dict[str, np.ndarray], curr: dict[str, np.ndarray],
+           sr_method: str = "sen2sr"):
+    """La chaine REELLE du worker : prev -> change_score -> classify."""
+    cr = change.change_score(prev, curr)
+    return classify(built_ratio=change.built_ratio(curr), delta_ndbi_mean=cr.delta_ndbi_mean,
+                    delta_bsi_mean=cr.delta_bsi_mean, change_score_value=cr.score,
+                    sr_method=sr_method)
+
+
+def test_built_ratio_mesure_la_part_minerale() -> None:
+    """Signal d'ETAT : part de la parcelle sans vegetation (NDBI > 0)."""
+    assert change.built_ratio(_scene(1.0, 0.0, 0.0)) == 0.0   # 100 % vegetal
+    assert change.built_ratio(_scene(0.0, 0.0, 1.0)) == 1.0   # 100 % bati
+
+
+def test_chaine_complete_atteint_les_5_jalons() -> None:
+    """Les 5 jalons doivent etre ATTEIGNABLES par la chaine reelle du worker.
+
+    Mesure du 2026-09-19 (avant ce cablage) : M4 etait du CODE MORT (0 fois sur 6000 tirages —
+    `growth` valait toujours l'emprise car le worker passait des zeros comme ligne de base), et
+    une parcelle stable sortait en « M1 fondation detectee ». Ce test verrouille la propriete
+    inverse : chaque etat de chantier a un chemin mesurable.
+    """
+    assert _stage(_scene(0.9, 0.1, 0.0), _scene(0.9, 0.1, 0.0)).milestone == Milestone.M0_TERRAIN
+    assert _stage(_scene(1.0, 0.0, 0.0), _scene(0.90, 0.10, 0.0)).milestone == Milestone.M1_FONDATION
+    assert _stage(_scene(0.55, 0.05, 0.40),
+                  _scene(0.45, 0.05, 0.50)).milestone == Milestone.M2_STRUCTURE
+    assert _stage(_scene(0.30, 0.05, 0.65), _scene(0.30, 0.05, 0.65)).milestone == Milestone.M3_TOITURE
+    assert _stage(_scene(0.05, 0.85, 0.10), _scene(0.75, 0.15, 0.10)).milestone == Milestone.M4_FINITION
+
+
+def test_hold_milestone_ne_regresse_jamais() -> None:
+    """Un chantier ne se de-construit pas : le jalon deja atteint est un plancher."""
+    assert hold_milestone(Milestone.M1_FONDATION, 3) == Milestone.M3_TOITURE
+    assert hold_milestone(Milestone.M4_FINITION, -1) == Milestone.M4_FINITION  # chantier neuf
+    assert hold_milestone(Milestone.M0_TERRAIN, 0) == Milestone.M0_TERRAIN
 
 
 def test_png_rgb_bytes() -> None:

@@ -67,3 +67,23 @@ def test_low_confidence_flag_on_fallback() -> None:
                  change_score_value=0.15, sr_method="bicubic_fallback")
     assert d.low_confidence is True
     assert d.confidence < 0.8
+
+
+def test_m0_sur_parcelle_stable_meme_partiellement_nue() -> None:
+    """Regression mesuree le 2026-09-19 : une parcelle STABLE avec 10 % de sol nu et AUCUN
+    changement sortait en M1 « fondation detectee » (M0 exigeait `built_ratio < 0.02`) — soit
+    « des travaux ont commence » affirme sur une parcelle ou il ne se passe rien."""
+    d = classify(built_ratio=0.10, delta_ndbi_mean=0.0, delta_bsi_mean=0.0,
+                 change_score_value=0.0, sr_method="sen2sr")
+    assert d.milestone == Milestone.M0_TERRAIN
+
+
+def test_m3_plateau_bati_non_avale_par_m0() -> None:
+    """Un plateau bati et calme est un plateau (M3), pas un terrain nu.
+
+    Garde-fou mesure : la premiere version du correctif M0 avalait M3 — un plateau a 69 % de
+    bati sortait « terrain nu ».
+    """
+    d = classify(built_ratio=0.69, delta_ndbi_mean=0.0, delta_bsi_mean=0.0,
+                 change_score_value=0.0, sr_method="sen2sr")
+    assert d.milestone == Milestone.M3_TOITURE

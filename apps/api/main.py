@@ -121,6 +121,7 @@ def _summary(o: Observation, has_image: bool) -> dict:
     return {"id": o.id, "obs_date": o.obs_date, "milestone": o.milestone,
             "milestone_label": p.get("milestone_label"), "pivot_confirme": o.pivot_confirme,
             "confidence": o.confidence, "emprise": p.get("emprise"), "pv_sum": p.get("pv_sum"),
+            "built_ratio": p.get("built_ratio"), "delta_ndbi": p.get("delta_ndbi"),
             "sr_method": p.get("sr_method"), "display_sr": p.get("display_sr"),
             "image_bbox": p.get("image_bbox"),
             "image_url": f"/observations/{o.id}/image" if has_image else None}
@@ -423,6 +424,10 @@ def progress(site_id: int, session: SessionDep) -> dict:
         "milestone_date": top.obs_date if top is not None else None,
         "milestone_emprise": top_p.get("emprise"),
         "milestone_pv": top_p.get("pv_sum"),
+        # Signal d'ETAT du classifieur de jalon : la part de bati de la parcelle, a cote de
+        # l'intensite de changement. C'est ce qui distingue une dalle brute d'une toiture posee
+        # (`built_ratio` >= 0,4 + plateau NDBI = toiture) — sans lui, le rail ne prouve rien.
+        "milestone_built_ratio": top_p.get("built_ratio"),
         "anchor_date": anchor.obs_date if anchor is not None else None,
         "pv_sum_first": pv_first, "pv_sum_last": pv_last,
         "delta_pra": latest_p.get("croissance"), "progression": progression,

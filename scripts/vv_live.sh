@@ -31,7 +31,7 @@
 #   A8.1  GET  /sites/{id}/compare?from&to       -> 200, progression <= 130 %
 #   A8.2  GET  /sites/{id}/compare  (meme obs)   -> 422
 #   A8.3  GET  /sites/{id}/compare  (obs inconnu)-> 404
-#   A4.1  (observations)                         -> M2/M3/M4 <=> pivot_confirme=true
+#   A4.1  (observations)                         -> jalons NON REGRESSIFS (M_t >= M_t-1)
 #   A3.1  GET  /sites/{id}/alerts                -> jalons monotones
 #   A7.1  (.env)                                 -> SMTP_HOST vide (aucun canal externe)
 #   A7.2  (.env)                                 -> NTFY_TOPIC (canal de publication) signale
@@ -154,6 +154,17 @@ elif k=="monotone":
         if v<prev: ok=False; break
         prev=v
     print("true" if ok else "false")
+elif k=="obs_monotone":
+    # Jalons des OBSERVATIONS tries par date, non regressifs. Garanti cote code par
+    # `milestones.hold_milestone` (le jalon ne redescend jamais sous celui deja atteint).
+    rows=sorted((o for o in items if o.get("milestone") is not None),
+                key=lambda o: str(o.get("obs_date") or ""))
+    seq=[int(o["milestone"]) for o in rows]
+    print("true" if all(b>=a for a,b in zip(seq,seq[1:])) else "false")
+elif k=="obs_seq":
+    rows=sorted((o for o in items if o.get("milestone") is not None),
+                key=lambda o: str(o.get("obs_date") or ""))
+    print(",".join("M" + str(int(o["milestone"])) for o in rows))
 elif k=="week_closed":
     import datetime
     today=datetime.date.today(); ongoing=today-datetime.timedelta(days=today.weekday())
@@ -298,9 +309,11 @@ if [ "${OBS_TOTAL:-0}" -ge 2 ]; then
   chk A8.3 "observation hors chantier -> 404" "$([ "$CODE" = "404" ] && echo 1 || echo 0)" "status=$CODE"
 fi
 
-VIOL="$(jsoncount "$TMP/obs.json" pivot)"
-chk A4.1 "M2/M3/M4 <=> pivot_confirme=true" "$([ "${VIOL:-1}" = "0" ] && echo 1 || echo 0)" \
-  "violations=$VIOL"
+OBS_MONO="$(jsoncount "$TMP/obs.json" obs_monotone)"
+OBS_SEQ="$(jsoncount "$TMP/obs.json" obs_seq)"
+chk A4.1 "jalons d'observation non regressifs (M_t >= M_t-1)" \
+  "$([ "$OBS_MONO" = "true" ] && echo 1 || echo 0)" \
+  "suite=$OBS_SEQ"
 
 # ------------------------------------------------------------------ A3 alertes monotones
 req GET "/sites/$SID/alerts"

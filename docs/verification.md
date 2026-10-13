@@ -83,7 +83,16 @@ facteur 15-30× : la lisibilité vient d'une SOURCE haute résolution, pas d'un 
 
 ## Runbook E2E manuel
 
-1. `docker compose -f infra/docker-compose.yml up --build`
+> **Version automatisée** : `scripts/vv_live.sh` couvre les assertions A1-A10 sur HTTP (healthz,
+> RFC 7807 404/409/422, création de chantier, backfill, ancre t0, `pv_sum`, `image_bbox`, compare,
+> jalons M0-M4, rapports `%PDF` + `ETag == sha256`). Mesuré le 2026-09-19 : **29/29 PASS, 0 FAIL**.
+> Exécutable **dans le conteneur** (`docker compose -f infra/docker-compose.yml exec -T api bash
+> /srv/scripts/vv_live.sh`) comme depuis l'hôte.
+> Commandes d'exploitation, budgets mémoire et **pannes connues** : [`ops-locale.md`](ops-locale.md).
+
+1. `docker compose -f infra/docker-compose.yml up --build`, puis **attendre `db` = healthy**
+   (`docker compose -f infra/docker-compose.yml ps`) : l'API ne démarre qu'ensuite
+   (`depends_on: db: {condition: service_healthy}`)
 2. http://localhost:8080 — creer un chantier (bbox Douala pre-remplie)
 3. Backfill -> observations + images
 4. Avant/Apres : choisir deux dates -> la CARTE montre les deux scenes SR superposees a OSM

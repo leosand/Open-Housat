@@ -1,0 +1,31 @@
+{
+  "version": "housat-finedouala-1/03",
+  "scene": "2024-12-05",
+  "sr": "bicubic",
+  "scale": 4,
+  "emprise_m": [
+    5040,
+    7820
+  ],
+  "resolution": "10.0 m effectif (x4) — « 1 m » reste un affichage, jamais une resolution de mesure",
+  "grille_native": [
+    782,
+    504
+  ],
+  "verdict": {
+    "SAM_degres": 1.71,
+    "SAM_ok": true,
+    "methode_ndvi": "produit_NDVI_a_10.0m_agrege_a_10m",
+    "NDVI_ecart_pct": 7.11,
+    "NDVI_ok": true,
+    "eau_pixels": 121428,
+    "texture_eau_ratio_SR_sur_natif": 0.743,
+    "eau_ok": true,
+    "eau_note": ""
+  },
+  "comparaison_bicubique": {
+    "psnr_sr_vs_bicubic": null,
+    "ssim_sr_vs_bicubic": null,
+    "note": "non applicable : on evalue le bicubique lui-meme (ligne de base)"
+  }
+}

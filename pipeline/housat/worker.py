@@ -19,7 +19,8 @@ from sqlalchemy.exc import IntegrityError
 
 from housat import observations as obs
 from housat.config import settings
-from housat.detection.change import bsi, ndbi, ndvi
+from housat.detection.change import bsi, built_ratio, change_score, ndbi, ndvi
+from housat.detection.milestones import Milestone, classify, hold_milestone
 from housat.imagery import clouds
 from housat.imagery.sentinel2 import SceneMeta, StacContext, fetch_bands, fetch_scl
 from housat.imagery.super_resolution import upscale_bands, upscale_rgb_display
@@ -108,6 +109,7 @@ def _persist_observation(
     engine: Engine, site_id: int, scene: SceneMeta, bands: dict[str, np.ndarray],
     anchor_idx: list[np.ndarray] | None, sr_method: str, image_bbox: list[float],
     raw_bands: dict[str, np.ndarray] | None = None,
+    prev_bands: dict[str, np.ndarray] | None = None,
 ) -> dict:
     """Calcule indicateurs vs ancre (grille alignee), persiste observation + alerte monotone."""
     base: dict = {"scene_id": scene.item_id, "acquired": scene.acquired.isoformat(),
@@ -115,7 +117,7 @@ def _persist_observation(
                   "image_bbox": image_bbox}
     if anchor_idx is None:  # premiere scene = ancre, baseline sans comparaison
         payload = {**base, "status": "baseline"}
-        milestone, pivot, confidence = 0, False, 0.9
+        milestone, pivot, confidence = Milestone.M0_TERRAIN, False, 0.9
     else:
         bands = obs.match_shape(bands, anchor_idx[0].shape)  # alignement grille (fix V&V)
         pvs, divs = [], []
@@ -123,14 +125,44 @@ def _persist_observation(
             pv, div = obs.pv_div(a, curr)
             pvs.append(pv)
             divs.append(div)
-        milestone, pivot, growth = obs.milestone_decision(
-            [np.zeros_like(p) for p in pvs], pvs, divs)
+        # JALON — source unique : le classifieur CONCU `detection/milestones.classify`, alimente
+        # par `change_score` (les deux modules sont faits pour s'emboiter : memes noms d'entrees).
+        # Avant le 2026-09-19 le worker utilisait un arbre de seuils (`observations.
+        # milestone_decision`, supprime) construit sur la seule AMPLEUR du changement : mesure du
+        # 2026-09-19 sur 40 observations reelles -> M4 inatteignable (0/6000 tirages) et M2 dans
+        # 38 cas sur 40. `classify` separe l'ETAT (`built_ratio`, ou en est le bati) de la
+        # TENDANCE (`delta_ndbi_mean`, `delta_bsi_mean`) : c'est la seule facon de distinguer une
+        # dalle d'une toiture avec ces donnees.
+        prev = obs.match_shape(prev_bands, bands["red"].shape) if prev_bands else None
+        cr = change_score(prev, bands) if prev is not None else None
+        decision = classify(
+            built_ratio=built_ratio(bands),
+            delta_ndbi_mean=cr.delta_ndbi_mean if cr is not None else 0.0,
+            delta_bsi_mean=cr.delta_bsi_mean if cr is not None else 0.0,
+            change_score_value=cr.score if cr is not None else 0.0,
+            sr_method=sr_method,
+        )
+        # Non-regression : le jalon retenu ne redescend jamais sous celui deja atteint.
+        milestone = hold_milestone(decision.milestone, _max_milestone(engine, site_id))
+        # Indice de reference du pivot : NDBI (bati). `dpra` remplace l'ancienne « croissance »,
+        # qui valait en realite l'emprise (le 1er argument de milestone_decision etait toujours
+        # nul) et se trouvait exposee sous le nom `delta_pra` — un chiffre juste sous un faux nom.
+        piv = obs.detect_pivot_pv(divs[1], pvs[1])
         payload = {**base, "status": "ok",
                    "emprise": round(obs.robust_frac_joint(pvs), 4),
-                   "croissance": round(growth, 4),
+                   "built_ratio": round(built_ratio(bands), 4),
+                   "delta_ndbi": round(cr.delta_ndbi_mean, 5) if cr is not None else None,
+                   "delta_bsi": round(cr.delta_bsi_mean, 5) if cr is not None else None,
+                   "croissance": round(float(piv["dpra"]), 5),
+                   "milestone_brut": int(decision.milestone),
                    "activite": round(float(np.mean([np.abs(d).mean() for d in divs])), 5),
                    "pv_sum": round(float(sum(obs.masked_sum(p) for p in pvs)), 3)}
-        confidence = 0.8 if sr_method == "sen2sr" else 0.55
+        pivot = bool(piv["qualifie"])
+        # `confidence` est celle du classifieur pour CETTE date, meme si le garde-fou a retenu un
+        # jalon plus haut. `milestone_brut` conserve le candidat, donc l'ecart est AUDITABLE au lieu
+        # d'etre invisible — mesure du 2026-09-19 : un « M3 » stocke avec 0,28 de confiance venait
+        # d'un candidat M1 ambigu (0,4 x 0,7 de repli SR) clampe vers le haut.
+        confidence = decision.confidence
     # Voie AFFICHAGE : surresolution perceptuelle optionnelle, appliquee aux bandes BRUTES (LR 10 m)
     # et non aux bandes de detection deja x4 (sinon double agrandissement x16, geometrie fausse).
     # Sans modele configure, repli sur l'image de detection (comportement historique).
@@ -202,12 +234,18 @@ def backfill_site(engine: Engine | None, site_id: int, *, limit: int = 10) -> di
                 continue
             raw = fetch_bands(ctx, polygon, scene)          # LR 10 m (sert la voie affichage)
             bands, sr_method = upscale_bands(raw)           # voie detection (radiometrique, x4)
+            # `prev` est RELU avant d'etre ecrase. La frame etait ecrite depuis le debut et jamais
+            # relue (mesure du 2026-09-19 : 0 appel a `_load_frame_row(..., "prev")`), donc
+            # `change_score(prev, curr)` — et la tendance du bati qu'il fournit — ne pouvait pas
+            # exister. Comme `_save_frame` ecrase « prev » par la scene COURANTE, la lecture doit
+            # avoir lieu AVANT l'ecriture.
+            prev_bands = _load_frame_row(engine, site_id, "prev") if anchor_idx is not None else None
             if anchor_idx is None:
                 anchor_idx = _indices(bands)
                 _save_frame(engine, site_id, "anchor", bands)
             _save_frame(engine, site_id, "prev", bands)
             results.append(_persist_observation(engine, site_id, scene, bands, anchor_idx,
-                                                sr_method, bbox, raw))
+                                                sr_method, bbox, raw, prev_bands=prev_bands))
         with engine.begin() as c:
             c.execute(text("UPDATE sites SET backfill_status='done' WHERE id=:i"), {"i": site_id})
         persisted = [r for r in results if r.get("status") != "duplicate"]
@@ -261,9 +299,10 @@ def check_site(engine: Engine | None, site_id: int) -> dict:
         anchor_idx = None
     else:
         anchor_idx = _indices(anchor)
+    prev_bands = _load_frame_row(engine, site_id, "prev") if anchor_idx is not None else None
     _save_frame(engine, site_id, "prev", bands)
     result = _persist_observation(engine, site_id, scene, bands, anchor_idx,
-                                  sr_method, _bbox4326(polygon), raw)
+                                  sr_method, _bbox4326(polygon), raw, prev_bands=prev_bands)
     if pct == pct:
         result["parcel_cloud_pct"] = round(pct, 1)
     return {"site_id": site_id, **result}

@@ -17,7 +17,7 @@ interface Site {
 interface Progress {
   backfill_status: string; backfill_error: string | null
   milestone: number | null; milestone_label: string | null; pivot_confirme: boolean
-  milestone_date?: string | null; milestone_emprise?: number | null
+  milestone_date?: string | null; milestone_emprise?: number | null; milestone_built_ratio?: number | null
   milestone_pv?: number | null; anchor_date?: string | null
   pv_sum_first: number; pv_sum_last: number; delta_pra: number | null
   progression: number; observations: number
@@ -720,7 +720,14 @@ function SiteStatus({ progress, obs, polygon }: {
         {progress.milestone_emprise != null && progress.milestone_pv != null && (
           <> A la date retenue : <b>{Math.round(progress.milestone_emprise * 100)} %</b> de
             l&apos;emprise en changement robuste, indice de changement{' '}
-            <b>{progress.milestone_pv.toFixed(1)}</b>.</>
+            <b>{progress.milestone_pv.toFixed(1)}</b>.
+            {progress.milestone_built_ratio != null && (
+              <> Part batie de la parcelle :{' '}
+                <b>{Math.round(progress.milestone_built_ratio * 100)} %</b> (c&apos;est ce chiffre,
+                avec la tendance du bati, qui separe une dalle d&apos;une toiture : au-dela de 40 %
+                avec une tendance plate, la toiture est en place).</>
+            )}
+          </>
         )}
       </p>
       {facts}
